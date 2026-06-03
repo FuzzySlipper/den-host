@@ -1,0 +1,452 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_FILE="${PROJECT_FILE:-$REPO_ROOT/src/DenHost/DenHost.csproj}"
+PUBLISH_DIR="${PUBLISH_DIR:-}"
+BUILD_ARTIFACTS_DIR="${BUILD_ARTIFACTS_DIR:-}"
+DEPLOY_MODE="${DEPLOY_MODE:-auto}"
+SSH_TARGET="${SSH_TARGET:-den-k8}"
+BINARY_DIR="${BINARY_DIR:-/usr/local/bin}"
+SERVICE_NAME="${SERVICE_NAME:-den-host.service}"
+SERVICE_USER="${SERVICE_USER:-$(whoami)}"
+SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn)}"
+CONFIG_PATH="${CONFIG_PATH:-$REPO_ROOT/den-host.json}"
+RUNTIME_DIR="${RUNTIME_DIR:-/var/lib/den-host}"
+REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/den-host-live-publish}"
+SKIP_RESTART=0
+SKIP_SMOKE=0
+DRY_RUN=0
+TEMP_PUBLISH_DIR_CREATED=0
+TEMP_BUILD_ARTIFACTS_DIR_CREATED=0
+
+usage() {
+  cat <<'EOF_USAGE'
+Usage: scripts/deploy-den-host.sh [options]
+
+Build and publish den-host (CLI/service binary) and install it locally or
+on a remote host. The binary is published as a self-contained single-file
+executable so .NET SDK is not required on the target machine.
+
+Modes:
+  local   Install on the current machine. Creates runtime dirs and optionally
+          registers a systemd user service for persistent den-host run.
+  remote  Build locally and upload to SSH_TARGET, then install remotely.
+
+DEPLOY_MODE defaults to auto. Auto selects local when running from /home/dev
+on den-k8, otherwise remote.
+
+Do not run this script itself with sudo. In local mode it uses non-interactive
+sudo internally for install steps. In remote mode it uses SSH plus remote sudo.
+
+Options:
+  --local          Force local deployment mode
+  --remote         Force remote SSH deployment mode
+  --skip-restart   Install binary but do not restart/enable systemd service
+  --skip-smoke     Do not run den-host smoke checks after deploy
+  --dry-run        Print resolved config and validate; no build/upload/install
+  -h, --help       Show this help
+
+Environment overrides:
+  DEPLOY_MODE, SSH_TARGET, SERVICE_NAME, SERVICE_USER, SERVICE_GROUP,
+  PROJECT_FILE, PUBLISH_DIR, BUILD_ARTIFACTS_DIR,
+  BINARY_DIR, CONFIG_PATH, RUNTIME_DIR
+EOF_USAGE
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --local)        DEPLOY_MODE=local ;;
+      --remote)       DEPLOY_MODE=remote ;;
+      --skip-restart) SKIP_RESTART=1 ;;
+      --skip-smoke)   SKIP_SMOKE=1 ;;
+      --dry-run)      DRY_RUN=1 ;;
+      -h|--help)      usage; exit 0 ;;
+      *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+    esac
+    shift
+  done
+}
+
+resolve_deploy_mode() {
+  case "$DEPLOY_MODE" in
+    local|remote) ;;
+    auto)
+      if [[ "$(hostname)" == den-k8 || -d /home/dev/den-host ]]; then
+        DEPLOY_MODE=local
+      else
+        DEPLOY_MODE=remote
+      fi
+      ;;
+    *) echo "Invalid DEPLOY_MODE: $DEPLOY_MODE (expected auto, local, or remote)" >&2; exit 1 ;;
+  esac
+  echo "Deploy mode: $DEPLOY_MODE"
+}
+
+print_config() {
+  cat <<EOF_CONFIG
+Resolved deploy configuration:
+  REPO_ROOT=$REPO_ROOT
+  PROJECT_FILE=$PROJECT_FILE
+  BUILD_ARTIFACTS_DIR=${BUILD_ARTIFACTS_DIR:-<temporary>}
+  PUBLISH_DIR=${PUBLISH_DIR:-<temporary>}
+  DEPLOY_MODE=$DEPLOY_MODE
+  SSH_TARGET=$SSH_TARGET
+  BINARY_DIR=$BINARY_DIR
+  SERVICE_NAME=$SERVICE_NAME
+  SERVICE_USER=$SERVICE_USER
+  SERVICE_GROUP=$SERVICE_GROUP
+  CONFIG_PATH=$CONFIG_PATH
+  RUNTIME_DIR=$RUNTIME_DIR
+  SKIP_RESTART=$SKIP_RESTART
+  SKIP_SMOKE=$SKIP_SMOKE
+EOF_CONFIG
+}
+
+preflight_tools() {
+  command -v dotnet >/dev/null || { echo "dotnet is required" >&2; exit 1; }
+  command -v rsync >/dev/null || { echo "rsync is required" >&2; exit 1; }
+  [[ -f "$PROJECT_FILE" ]] || { echo "Project file not found: $PROJECT_FILE" >&2; exit 1; }
+  if [[ "$DEPLOY_MODE" == "remote" ]]; then
+    command -v ssh >/dev/null || { echo "ssh is required for remote mode" >&2; exit 1; }
+  fi
+}
+
+shell_quote() {
+  printf '%q' "$1"
+}
+
+require_non_root() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    echo "Run this script as your normal user, not with sudo." >&2
+    echo "The script performs privileged install steps internally." >&2
+    exit 1
+  fi
+}
+
+preflight_privilege() {
+  if [[ "$DEPLOY_MODE" == "local" ]]; then
+    if ! sudo -n true 2>/dev/null; then
+      cat >&2 <<EOF
+Deploy preflight failed: local mode requires non-interactive sudo for
+installing the binary to $BINARY_DIR and setting up runtime dirs under
+$RUNTIME_DIR. Alternatively, set BINARY_DIR and RUNTIME_DIR to paths
+your user owns.
+EOF
+      exit 1
+    fi
+  else
+    if ! ssh "$SSH_TARGET" 'sudo -n true' 2>/dev/null; then
+      cat >&2 <<EOF
+Deploy preflight failed: remote mode requires SSH to $SSH_TARGET and
+non-interactive sudo on the remote host.
+EOF
+      exit 1
+    fi
+  fi
+}
+
+initialize_publish_dir() {
+  if [[ -n "$PUBLISH_DIR" ]]; then
+    rm -rf "$PUBLISH_DIR"
+    mkdir -p "$PUBLISH_DIR"
+    return
+  fi
+  PUBLISH_DIR="$(mktemp -d /tmp/den-host-live-publish.XXXXXX)"
+  TEMP_PUBLISH_DIR_CREATED=1
+}
+
+initialize_build_artifacts_dir() {
+  if [[ -n "$BUILD_ARTIFACTS_DIR" ]]; then
+    rm -rf "$BUILD_ARTIFACTS_DIR"
+    mkdir -p "$BUILD_ARTIFACTS_DIR"
+    return
+  fi
+  BUILD_ARTIFACTS_DIR="$(mktemp -d /tmp/den-host-live-artifacts.XXXXXX)"
+  TEMP_BUILD_ARTIFACTS_DIR_CREATED=1
+}
+
+cleanup() {
+  if [[ "$TEMP_PUBLISH_DIR_CREATED" -eq 1 && -n "$PUBLISH_DIR" ]]; then
+    rm -rf "$PUBLISH_DIR"
+  fi
+  if [[ "$TEMP_BUILD_ARTIFACTS_DIR_CREATED" -eq 1 && -n "$BUILD_ARTIFACTS_DIR" ]]; then
+    rm -rf "$BUILD_ARTIFACTS_DIR"
+  fi
+}
+
+publish_binary() {
+  echo "Publishing den-host as self-contained single-file binary ..."
+  env \
+    GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-1}" \
+    GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-safe.directory}" \
+    GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-$REPO_ROOT}" \
+    dotnet publish "$PROJECT_FILE" \
+      -c Release \
+      -r linux-x64 \
+      --self-contained \
+      --artifacts-path "$BUILD_ARTIFACTS_DIR" \
+      -p:PublishSingleFile=true \
+      -p:IncludeNativeLibrariesForSelfExtract=true \
+      -p:DebugType=embedded \
+      -o "$PUBLISH_DIR/"
+
+  [[ -x "$PUBLISH_DIR/den-host" ]] || { echo "Publish output missing den-host executable" >&2; exit 1; }
+  echo "Published: $(file "$PUBLISH_DIR/den-host")"
+}
+
+sudo_local() {
+  sudo -n "$@"
+}
+
+remote_install_script() {
+  cat <<'EOF_REMOTE'
+set -euo pipefail
+: "${BINARY_DIR:?}"
+: "${SERVICE_NAME:?}"
+: "${SERVICE_USER:?}"
+: "${SERVICE_GROUP:?}"
+: "${CONFIG_PATH:?}"
+: "${RUNTIME_DIR:?}"
+: "${SKIP_RESTART:?}"
+
+publish_stage="$REMOTE_STAGE_DIR/publish"
+
+if [[ ! -f "$publish_stage/den-host" ]]; then
+  echo "Remote stage is missing den-host: $publish_stage" >&2
+  exit 1
+fi
+
+echo "Installing den-host binary to $BINARY_DIR ..."
+sudo -n install -d -m 0755 "$BINARY_DIR"
+sudo -n cp "$publish_stage/den-host" "$BINARY_DIR/den-host"
+sudo -n chmod 755 "$BINARY_DIR/den-host"
+
+echo "Setting up runtime directories under $RUNTIME_DIR ..."
+sudo -n install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR"
+sudo -n install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/run"
+sudo -n install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/state"
+sudo -n install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/log"
+sudo -n install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/quarantine"
+
+echo "Installing config to $(dirname "$CONFIG_PATH") ..."
+sudo -n install -d -m 0755 "$(dirname "$CONFIG_PATH")"
+if [[ -f "$CONFIG_PATH" ]]; then
+  echo "Config already exists at $CONFIG_PATH; preserving existing file."
+else
+  sudo -n cp "$publish_stage/den-host.example.json" "$CONFIG_PATH"
+  sudo -n chmod 644 "$CONFIG_PATH"
+fi
+
+# Install systemd user service unit.
+local_service_dir="/etc/systemd/system"
+sudo -n install -d -m 0755 "$local_service_dir"
+sudo -n cp "$publish_stage/den-host.service" "$local_service_dir/$SERVICE_NAME"
+sudo -n chmod 644 "$local_service_dir/$SERVICE_NAME"
+sudo -n systemctl daemon-reload
+
+if [[ "$SKIP_RESTART" -eq 1 ]]; then
+  echo "Installed den-host binary + service unit; skipping restart."
+  sudo -n rm -rf "$REMOTE_STAGE_DIR"
+  exit 0
+fi
+
+echo "Enabling and restarting $SERVICE_NAME ..."
+sudo -n systemctl enable "$SERVICE_NAME" 2>/dev/null || true
+if sudo -n systemctl restart "$SERVICE_NAME"; then
+  sudo -n systemctl --no-pager --full status "$SERVICE_NAME" --lines=15
+  echo "Service $SERVICE_NAME restarted successfully."
+  sudo -n rm -rf "$REMOTE_STAGE_DIR"
+  exit 0
+fi
+
+echo "Service restart failed; binary is installed but service not running." >&2
+sudo -n systemctl --no-pager --full status "$SERVICE_NAME" --lines=40 || true
+exit 1
+EOF_REMOTE
+}
+
+generate_service_unit() {
+  local unit_path="$1"
+  cat > "$unit_path" <<EOF_SERVICE
+# den-host systemd service unit.
+# Den Host is the harness-agnostic machine-local Den agent/runtime host.
+# It is not an HTTP server -- it runs background services (binding
+# heartbeat, Channels shadow reader, reconciliation) as a Generic Host.
+#
+# To deploy: run scripts/deploy-den-host.sh or copy this unit to
+# /etc/systemd/system/den-host.service and adapt paths as needed.
+#
+# After install:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable den-host.service
+#   sudo systemctl start den-host.service
+#   sudo systemctl status den-host.service
+#
+# View logs: journalctl -fu den-host.service
+
+[Unit]
+Description=Den Host – harness-agnostic local agent runtime
+Documentation=https://github.com/FuzzySlipper/den-host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=${BINARY_DIR}/den-host run
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+
+Environment="DEN_HOST_CONFIG=${CONFIG_PATH}"
+
+# Set up runtime dirs one level up from the actual dirs so den-host
+# creates its own subdirs under RUNTIME_DIR with correct permissions.
+# Override in EnvironmentFile if needed.
+Environment="DEN_HOST_RUN_DIR=${RUNTIME_DIR}/run"
+Environment="DEN_HOST_STATE_DIR=${RUNTIME_DIR}/state"
+Environment="DEN_HOST_LOG_DIR=${RUNTIME_DIR}/log"
+Environment="DEN_HOST_QUARANTINE_DIR=${RUNTIME_DIR}/quarantine"
+
+# Secrets should be set via environment or EnvironmentFile:
+# Environment="DEN_HOST_CORE_API_KEY=..."
+# Environment="DEN_HOST_CHANNELS_API_KEY=..."
+# Do NOT embed secrets in the unit file.
+
+# RuntimeDirectories are created by systemd before ExecStart.
+RuntimeDirectory=den-host
+RuntimeDirectoryMode=0750
+
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
+
+# Hardening
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF_SERVICE
+}
+
+smoke_binary() {
+  if [[ "$SKIP_SMOKE" -eq 1 ]]; then
+    echo "Skipping smoke checks."
+    return
+  fi
+
+  local bin="${BINARY_DIR}/den-host"
+  if [[ "$DEPLOY_MODE" == "remote" ]]; then
+    echo "Running remote smoke checks on $SSH_TARGET ..."
+    ssh "$SSH_TARGET" "$(shell_quote "$bin") version" </dev/null
+    ssh "$SSH_TARGET" "$(shell_quote "$bin") health --no-fail" </dev/null || echo "(health status is informational; non-zero exit is expected if Core/Channels are unreachable)"
+    ssh "$SSH_TARGET" "$(shell_quote "$bin") smoke" </dev/null || echo "(smoke status is informational; may be blocked if hermes not installed)"
+    echo "Remote smoke checks completed."
+  else
+    echo "Running local smoke checks ..."
+    "$bin" version
+    "$bin" health --no-fail || echo "(health status is informational; non-zero exit is expected if Core/Channels are unreachable)"
+    "$bin" smoke || echo "(smoke status is informational; may be blocked if hermes not installed)"
+    echo "Local smoke checks completed."
+  fi
+}
+
+sync_binary_local() {
+  echo "Installing den-host to $BINARY_DIR ..."
+  sudo_local install -d -m 0755 "$BINARY_DIR"
+  sudo_local cp "$PUBLISH_DIR/den-host" "$BINARY_DIR/den-host"
+  sudo_local chmod 755 "$BINARY_DIR/den-host"
+
+  echo "Setting up runtime directories under $RUNTIME_DIR ..."
+  sudo_local install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR"
+  sudo_local install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/run"
+  sudo_local install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/state"
+  sudo_local install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/log"
+  sudo_local install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$RUNTIME_DIR/quarantine"
+
+  # Copy the example config for reference; never overwrite an existing live config.
+  if [[ ! -f "$CONFIG_PATH" ]]; then
+    echo "Installing example config to $CONFIG_PATH ..."
+    sudo_local cp "$REPO_ROOT/config/den-host.example.json" "$CONFIG_PATH"
+    sudo_local chmod 644 "$CONFIG_PATH"
+  else
+    echo "Config exists at $CONFIG_PATH; preserving. Example at $REPO_ROOT/config/den-host.example.json."
+  fi
+
+  # Generate and install the systemd service unit.
+  local tmp_unit
+  tmp_unit="$(mktemp /tmp/den-host.service.XXXXXX)"
+  generate_service_unit "$tmp_unit"
+  sudo_local cp "$tmp_unit" "/etc/systemd/system/$SERVICE_NAME"
+  sudo_local chmod 644 "/etc/systemd/system/$SERVICE_NAME"
+  rm -f "$tmp_unit"
+  sudo_local systemctl daemon-reload
+
+  echo "Binary installed at $BINARY_DIR/den-host"
+  echo "Runtime dirs under $RUNTIME_DIR"
+  echo "Service unit: /etc/systemd/system/$SERVICE_NAME"
+}
+
+sync_binary_remote() {
+  echo "Uploading publish output to $SSH_TARGET: ..."
+  # shellcheck disable=SC2029
+  ssh "$SSH_TARGET" "rm -rf $(shell_quote "$REMOTE_STAGE_DIR") && mkdir -p $(shell_quote "$REMOTE_STAGE_DIR/publish")"
+  rsync -a --delete "$PUBLISH_DIR/" "$SSH_TARGET:$REMOTE_STAGE_DIR/publish/"
+  # Also upload the example config for remote install.
+  rsync -a "$REPO_ROOT/config/den-host.example.json" "$SSH_TARGET:$REMOTE_STAGE_DIR/publish/"
+
+  local remote_env remote_install_path
+  remote_install_path="$REMOTE_STAGE_DIR/install-den-host.sh"
+  remote_env="BINARY_DIR=$(shell_quote "$BINARY_DIR")"
+  remote_env+=" SERVICE_NAME=$(shell_quote "$SERVICE_NAME")"
+  remote_env+=" SERVICE_USER=$(shell_quote "$SERVICE_USER")"
+  remote_env+=" SERVICE_GROUP=$(shell_quote "$SERVICE_GROUP")"
+  remote_env+=" CONFIG_PATH=$(shell_quote "$CONFIG_PATH")"
+  remote_env+=" RUNTIME_DIR=$(shell_quote "$RUNTIME_DIR")"
+  remote_env+=" SKIP_RESTART=$(shell_quote "$SKIP_RESTART")"
+  remote_env+=" REMOTE_STAGE_DIR=$(shell_quote "$REMOTE_STAGE_DIR")"
+
+  # shellcheck disable=SC2029
+  remote_install_script | ssh "$SSH_TARGET" "cat > $(shell_quote "$remote_install_path") && chmod 700 $(shell_quote "$remote_install_path")"
+  # shellcheck disable=SC2029
+  ssh "$SSH_TARGET" "$remote_env bash $(shell_quote "$remote_install_path")"
+}
+
+sync_binary() {
+  if [[ "$DEPLOY_MODE" == "local" ]]; then
+    sync_binary_local
+  else
+    sync_binary_remote
+  fi
+}
+
+main() {
+  require_non_root
+  parse_args "$@"
+  resolve_deploy_mode
+  print_config
+  preflight_tools
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "Dry run requested; stopping before build/upload/install."
+    exit 0
+  fi
+
+  preflight_privilege
+  initialize_publish_dir
+  initialize_build_artifacts_dir
+  trap cleanup EXIT
+
+  # Generate the systemd service unit alongside the publish output so the
+  # remote install script can copy it.
+  generate_service_unit "$PUBLISH_DIR/den-host.service"
+
+  publish_binary
+  sync_binary
+  smoke_binary
+  echo "Deploy complete."
+}
+
+main "$@"
