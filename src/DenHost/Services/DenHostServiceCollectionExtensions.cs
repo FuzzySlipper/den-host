@@ -32,15 +32,18 @@ public static class DenHostServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        // Default log filter: den-host at Information, System.Net.Http.HttpClient
-        // at Warning (the per-request Information logging is very noisy in
-        // health/probe output). Operators can override with normal config:
+        // Default log filter: den-host at Information, Microsoft.Hosting.Lifetime
+        // at Information, and the entire System.Net.Http.HttpClient category tree
+        // (including typed-client subcategories like
+        // System.Net.Http.HttpClient.ICoreClient.ClientHandler) at Warning. The
+        // typed-client Information logging is very noisy in health/probe output.
+        // Operators can override with normal config:
         //   "Logging": { "LogLevel": { "System.Net.Http.HttpClient": "Information" } }
         services.AddLogging(builder =>
         {
             builder.AddFilter("DenHost", LogLevel.Information);
             builder.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);
-            builder.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+            builder.AddFilter("System.Net.Http.HttpClient*", LogLevel.Warning);
         });
         // --- Options ---------------------------------------------------------
         services.AddOptions<AdapterOptions>()
@@ -79,6 +82,12 @@ public static class DenHostServiceCollectionExtensions
             return AdapterIdentity.From(options);
         });
 
+        // --- Runtime options (singleton, derived from IOptions) -----------
+        // Registered as a concrete RuntimeOptions so hosted services can take
+        // it directly. The Options system already runs ValidateOnStart, so
+        // a single source of truth (IOptions<RuntimeOptions>.Value) is fine.
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<RuntimeOptions>>().Value);
+
         // --- HTTP clients (typed, with BaseAddress from options) -----------
         services.AddHttpClient<ICoreClient, CoreClient>((sp, client) =>
         {
@@ -93,6 +102,15 @@ public static class DenHostServiceCollectionExtensions
             client.BaseAddress = new Uri(channels.BaseUrl);
             client.Timeout = TimeSpan.FromMilliseconds(channels.TimeoutMs);
         });
+
+        // --- Local binding state store + binding health provider ----------
+        services.AddSingleton(sp =>
+        {
+            var runtime = sp.GetRequiredService<IOptions<RuntimeOptions>>().Value;
+            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<LocalBindingStateStore>();
+            return new LocalBindingStateStore(runtime, logger);
+        });
+        services.AddSingleton<IBindingHealthProvider, BindingHealthProvider>();
 
         // --- Health reporter ------------------------------------------------
         services.AddSingleton<IHealthReporter, HealthReporter>();
@@ -133,8 +151,9 @@ public static class DenHostServiceCollectionExtensions
             return list;
         });
 
-        // --- Background services (none in #1914; heartbeat in #1915) -------
+        // --- Background services ------------------------------------------
         services.AddHostedService<HostHeartbeatService>();
+        services.AddHostedService<AdapterBindingHeartbeatService>();
 
         // --- CLI surface ----------------------------------------------------
         // Help and version are built into CliDispatcher to avoid a circular
@@ -142,8 +161,10 @@ public static class DenHostServiceCollectionExtensions
         services.TryAddSingleton<ICliHost, ConsoleCliHost>();
         services.AddSingleton<HealthCommand>();
         services.AddSingleton<RunCommand>();
+        services.AddSingleton<BindingCommand>();
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<HealthCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<RunCommand>());
+        services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<BindingCommand>());
         services.AddSingleton<CliDispatcher>();
 
         return services;

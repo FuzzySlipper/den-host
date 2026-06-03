@@ -56,4 +56,13 @@ public sealed class RuntimeOptions
     /// </summary>
     [Range(1, 86_400 * 30)]
     public int CursorMaxAgeSeconds { get; init; } = 86_400;
+
+    /// <summary>
+    /// Interval in seconds between adapter binding heartbeats to Core.
+    /// The first probe runs at host startup; subsequent probes run on
+    /// this interval. Set to 0 to disable the heartbeat (one-shot
+    /// <c>den-host binding</c> is still available).
+    /// </summary>
+    [Range(0, 86_400)]
+    public int BindingHeartbeatSeconds { get; init; } = 30;
 }

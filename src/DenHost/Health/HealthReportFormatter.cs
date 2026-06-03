@@ -32,6 +32,8 @@ public static class HealthReportFormatter
         AppendProbe(sb, "Core", report.Core);
         sb.AppendLine();
         AppendProbe(sb, "Channels", report.Channels);
+        sb.AppendLine();
+        AppendBinding(sb, report.Binding);
 
         if (report.HarnessModules.Count > 0)
         {
@@ -68,8 +70,16 @@ public static class HealthReportFormatter
                 managedRoles = report.Identity.ManagedRoles,
                 managedCapabilities = report.Identity.ManagedCapabilities,
             },
-            core = ToDto(report.Core),
-            channels = ToDto(report.Channels),
+            core = ToProbeDto(report.Core),
+            channels = ToProbeDto(report.Channels),
+            binding = new
+            {
+                state = report.Binding.State.ToString().ToLowerInvariant(),
+                lastSeen = report.Binding.LastSeen,
+                lastError = report.Binding.LastError,
+                blockerEvidencePath = report.Binding.BlockerEvidencePath,
+                isFresh = report.Binding.IsFresh,
+            },
             harnessModules = report.HarnessModules.Select(m => new
             {
                 name = m.Name,
@@ -93,7 +103,19 @@ public static class HealthReportFormatter
         sb.AppendLine($"  message      = {(string.IsNullOrEmpty(probe.Message) ? "-" : probe.Message)}");
     }
 
-    private static object ToDto(ProbeResult probe) => new
+    private static void AppendBinding(System.Text.StringBuilder sb, AdapterBindingHealth binding)
+    {
+        sb.AppendLine("Adapter binding");
+        sb.AppendLine($"  state       = {binding.State.ToString().ToLowerInvariant()}");
+        sb.AppendLine($"  last_seen   = {(binding.LastSeen?.ToString("O") ?? "-")}");
+        sb.AppendLine($"  last_error  = {(string.IsNullOrEmpty(binding.LastError) ? "-" : binding.LastError)}");
+        if (binding.BlockerEvidencePath is not null)
+        {
+            sb.AppendLine($"  blocker     = {binding.BlockerEvidencePath}");
+        }
+    }
+
+    private static object ToProbeDto(ProbeResult probe) => new
     {
         reachable = probe.Reachable,
         statusCode = probe.StatusCode,

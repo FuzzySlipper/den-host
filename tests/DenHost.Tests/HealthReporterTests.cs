@@ -9,7 +9,7 @@ namespace DenHost.Tests;
 public class HealthReporterTests
 {
     [Fact]
-    public async Task BuildReportAsync_AggregatesCoreChannelsAndHarness()
+    public async Task BuildReportAsync_AggregatesCoreChannelsBindingAndHarness()
     {
         var identity = new AdapterIdentity
         {
@@ -21,6 +21,7 @@ public class HealthReporterTests
         };
         var core = new FakeCoreClient(ProbeResult.Ok(200, 3));
         var channels = new FakeChannelsClient(ProbeResult.Unreachable(null, 50, "Connection refused"));
+        var binding = new FakeBindingProvider(AdapterBindingHealth.Registered(DateTimeOffset.UtcNow));
         var modules = new IHarnessModule[]
         {
             new StubHarnessModule("a"),
@@ -28,13 +29,14 @@ public class HealthReporterTests
         };
 
         var reporter = new HealthReporter(
-            identity, core, channels, modules, NullLogger<HealthReporter>.Instance);
+            identity, core, channels, binding, modules, NullLogger<HealthReporter>.Instance);
 
         var report = await reporter.BuildReportAsync(CancellationToken.None);
 
         Assert.Same(identity, report.Identity);
         Assert.True(report.Core.Reachable);
         Assert.False(report.Channels.Reachable);
+        Assert.Equal(AdapterBindingState.Registered, report.Binding.State);
         Assert.Equal(2, report.HarnessModules.Count);
         Assert.Contains(report.HarnessModules, m => m.Name == "a" && !m.Available);
         Assert.Contains(report.HarnessModules, m => m.Name == "b" && m.Available);
@@ -54,13 +56,39 @@ public class HealthReporterTests
         };
         var core = new FakeCoreClient(ProbeResult.Ok(200, 1));
         var channels = new FakeChannelsClient(ProbeResult.Ok(200, 1));
+        var binding = new FakeBindingProvider(AdapterBindingHealth.Registered(DateTimeOffset.UtcNow));
         var modules = new IHarnessModule[] { new AvailableFakeModule("a") };
 
         var reporter = new HealthReporter(
-            identity, core, channels, modules, NullLogger<HealthReporter>.Instance);
+            identity, core, channels, binding, modules, NullLogger<HealthReporter>.Instance);
 
         var report = await reporter.BuildReportAsync(CancellationToken.None);
         Assert.True(report.IsHealthy);
+    }
+
+    [Fact]
+    public async Task BuildReportAsync_StaleBinding_Degrades()
+    {
+        var identity = new AdapterIdentity
+        {
+            Kind = "host",
+            InstanceId = "i-3",
+            Host = "host-3",
+            ManagedRoles = Array.Empty<string>(),
+            ManagedCapabilities = Array.Empty<string>(),
+        };
+        var core = new FakeCoreClient(ProbeResult.Ok(200, 1));
+        var channels = new FakeChannelsClient(ProbeResult.Ok(200, 1));
+        var binding = new FakeBindingProvider(
+            AdapterBindingHealth.Stale(DateTimeOffset.UtcNow.AddSeconds(-60), "Connection refused"));
+        var modules = Array.Empty<IHarnessModule>();
+
+        var reporter = new HealthReporter(
+            identity, core, channels, binding, modules, NullLogger<HealthReporter>.Instance);
+
+        var report = await reporter.BuildReportAsync(CancellationToken.None);
+        Assert.False(report.IsHealthy);
+        Assert.Equal(AdapterBindingState.Stale, report.Binding.State);
     }
 
     private sealed class FakeCoreClient : ICoreClient
@@ -81,6 +109,13 @@ public class HealthReporterTests
         public Task<ProbeResult> GetHealthAsync(CancellationToken cancellationToken) => Task.FromResult(_health);
         public Task<DirectAgentEventPage> GetDirectAgentEventsAsync(string? cursor, int limit, CancellationToken cancellationToken) =>
             Task.FromResult(new DirectAgentEventPage(Array.Empty<DirectAgentEvent>(), null));
+    }
+
+    private sealed class FakeBindingProvider : DenHost.Host.IBindingHealthProvider
+    {
+        private readonly AdapterBindingHealth _health;
+        public FakeBindingProvider(AdapterBindingHealth health) { _health = health; }
+        public Task<AdapterBindingHealth> ProbeAsync(CancellationToken cancellationToken) => Task.FromResult(_health);
     }
 
     private sealed class AvailableFakeModule : IHarnessModule

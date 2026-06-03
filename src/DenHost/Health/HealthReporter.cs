@@ -10,6 +10,7 @@ internal sealed class HealthReporter : IHealthReporter
     private readonly AdapterIdentity _identity;
     private readonly ICoreClient _core;
     private readonly IChannelsClient _channels;
+    private readonly IBindingHealthProvider _bindingProvider;
     private readonly IEnumerable<IHarnessModule> _harnessModules;
     private readonly ILogger<HealthReporter> _logger;
 
@@ -17,25 +18,29 @@ internal sealed class HealthReporter : IHealthReporter
         AdapterIdentity identity,
         ICoreClient core,
         IChannelsClient channels,
+        IBindingHealthProvider bindingProvider,
         IEnumerable<IHarnessModule> harnessModules,
         ILogger<HealthReporter> logger)
     {
         _identity = identity;
         _core = core;
         _channels = channels;
+        _bindingProvider = bindingProvider;
         _harnessModules = harnessModules;
         _logger = logger;
     }
 
     public async Task<HealthReport> BuildReportAsync(CancellationToken cancellationToken)
     {
-        // Probe Core and Channels in parallel; they are independent.
+        // Core, Channels, and the binding probe are independent and run in parallel.
         var coreTask = _core.GetHealthAsync(cancellationToken);
         var channelsTask = _channels.GetHealthAsync(cancellationToken);
-        await Task.WhenAll(coreTask, channelsTask).ConfigureAwait(false);
+        var bindingTask = _bindingProvider.ProbeAsync(cancellationToken);
+        await Task.WhenAll(coreTask, channelsTask, bindingTask).ConfigureAwait(false);
 
         var coreResult = coreTask.Result;
         var channelsResult = channelsTask.Result;
+        var bindingResult = bindingTask.Result;
 
         var modules = new List<HarnessModuleHealth>();
         foreach (var module in _harnessModules)
@@ -53,6 +58,7 @@ internal sealed class HealthReporter : IHealthReporter
             modules.Add(new HarnessModuleHealth(module.Name, module.Kind, Enabled: true, Available: available));
         }
 
-        return new HealthReport(_identity, coreResult, channelsResult, modules, DateTimeOffset.UtcNow);
+        return new HealthReport(
+            _identity, coreResult, channelsResult, bindingResult, modules, DateTimeOffset.UtcNow);
     }
 }
