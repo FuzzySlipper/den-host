@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>DenHost.Harness.Modules.Hermes</AssemblyName>
+    <RootNamespace>DenHost.Harness.Modules.Hermes</RootNamespace>
+    <!--
+      This is the firewall assembly for the Hermes harness.
+      DenHost depends on DenHost.Harness; the Hermes module
+      depends on DenHost.Harness. DenHost references this
+      assembly explicitly to instantiate the first concrete
+      module by Kind; generic DenHost code still uses only
+      IHarnessModule.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DenHost.Harness\DenHost.Harness.csproj" />
+  </ItemGroup>
+
+</Project>

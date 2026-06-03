@@ -107,11 +107,66 @@ All concrete harnesses (Hermes, future Pi/Codex/Claude Code/OpenCode, future
 Den-native actor runtime) implement `DenHost.Harness.IHarnessModule`. Each
 concrete harness lives in its own assembly, depends only on
 `DenHost.Harness`, and reads its own opaque `Settings` from configuration.
-`DenHost` never references a concrete harness assembly.
+`DenHost` references the firewall assembly (`DenHost.Harness`) and the
+first concrete module assembly (`DenHost.Harness.Modules.Hermes`); the
+factory in `AddDenHost` is the only place that names a concrete
+`HermesHarnessModule`. Everything else uses `IHarnessModule`.
+
+The interface covers the points required by den-host task #1917:
+
+- `Name`, `Kind`, `IsAvailable()` — identity and cheap readiness check.
+- `GetCapabilitiesAsync` — generic Den-facing role + capability tokens.
+- `GetLocalInventoryAsync` — generic pool-member descriptors.
+- `WakeAsync(envelope)` / `StopAsync(handle)` / `CollectEvidenceAsync(handle)` —
+  launch and lifecycle hooks driven by a generic `WakeEnvelope` and
+  `WorkerHandle`. The harness module is free to interpret the envelope
+  internally (Hermes translates it to `hermes --profile ... --role ...
+  --project ...`); den-host never sees those flags.
+- `ResetSessionAsync(handle)` — module-specific session cleanup (Hermes keeps
+  it as a no-op stub for now; its actual session reset is internal).
+- `SmokeAsync` — bounded smoke used by `den-host smoke <module>`. Default
+  reports "not implemented"; the Hermes module runs `hermes --version`.
+
+The Hermes module lives in `src/DenHost.Harness.Modules.Hermes/`. It shells
+out to the `hermes` CLI as a child process — the Python interpreter
+never enters the den-host process. The silo is the OS process boundary.
+
+### Adding a future harness module (Pi / Codex / Claude Code / OpenCode)
+
+1. Create `src/DenHost.Harness.Modules.<Kind>/DenHost.Harness.Modules.<Kind>.csproj`
+   with a single project reference to `DenHost.Harness.csproj`. Do NOT
+   reference `DenHost.csproj` from the module.
+2. Add a `public sealed class <Kind>HarnessModule : IHarnessModule` that
+   implements the methods you support and throws `NotSupportedException`
+   for the rest (the interface provides default impls where reasonable).
+3. Add a project reference from `DenHost.csproj` to the new module
+   assembly and a `case HarnessModuleKind.<Kind>:` branch in the factory
+   inside `AddDenHost` that builds the concrete module. No changes to
+   Core/Channels are required.
+4. Add a `<Kind>` module to `den-host.json`:
+
+   ```json
+   "Harness": {
+     "Modules": [
+       { "Name": "<kind>-default", "Kind": "<Kind>", "Enabled": true,
+         "Settings": { /* opaque to DenHost, parsed by the module */ } }
+     ]
+   }
+   ```
+
+5. Add a smoke that verifies the module can launch its underlying harness
+   on this host. The Hermes module pattern (`SmokeAsync` runs the binary's
+   `--version`) is a good template.
+
+The harness firewall is preserved as long as Core/Channels-facing types
+(`AdapterIdentity`, `ProbeResult`, `WakeEnvelope`, `WorkerHandle`,
+`HarnessSmokeResult`, ...) stay generic. The concrete module can do
+anything inside its own assembly; den-host does not look at it.
 
 ## Status
 
-This is the bootstrap deliverable for den-host task #1914. It ships:
+This is the bootstrap deliverable for den-host tasks #1914 through #1917.
+It ships:
 
 - repo skeleton, build, test
 - Generic Host / Worker Service entry point
@@ -120,12 +175,20 @@ This is the bootstrap deliverable for den-host task #1914. It ships:
 - Core/Channels typed HTTP clients (health probe, binding register/readback,
   direct-agent event read)
 - `den-host health` CLI command (text and JSON output)
-- harness module firewall assembly with a stub implementation
-- background service for `den-host run` (heartbeat log only for now)
+- harness module firewall assembly with the `IHarnessModule` interface
+  (capabilities / inventory / wake / stop / evidence / reset / smoke)
+- Hermes harness module in its own assembly, silo'd at the process
+  boundary (no Python in den-host); `den-host smoke hermes-default` runs
+  the bounded `hermes --version` smoke
+- adapter binding heartbeat (`den-host binding`, `den-host run` background
+  service) with blocker evidence when Core lacks the binding endpoint
+- Channels direct-agent shadow reader (`den-host events tail`,
+  `den-host run` background service) that never mutates Core/Channels
+  and never launches a worker; logs migration-diff notes for cutover
+  comparison
 
-Tasks #1915, #1916, #1917, #1918 add: live adapter binding heartbeat,
-Channels direct-agent shadow reader, real Hermes harness module, and
-worker run/process/session reconciliation with quarantine evidence.
+Task #1918 (worker run/process/session reconciliation and quarantine
+evidence) is the remaining item in the den-host starting task set.
 
 ## References
 

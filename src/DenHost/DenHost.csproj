@@ -18,6 +18,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DenHost.Harness\DenHost.Harness.csproj" />
+    <!--
+      The Hermes module assembly is referenced because #1917 wires it as the
+      first concrete harness module. The factory in AddDenHost is the only
+      DenHost code that names HermesHarnessModule; everything else uses
+      IHarnessModule. Future modules (Pi/Codex/Claude Code/OpenCode) will
+      follow the same pattern: their own assembly, referenced here.
+    -->
+    <ProjectReference Include="..\DenHost.Harness.Modules.Hermes\DenHost.Harness.Modules.Hermes.csproj" />
   </ItemGroup>
 
 </Project>

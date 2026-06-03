@@ -4,6 +4,7 @@ using DenHost.Cli.Hosting;
 using DenHost.Clients;
 using DenHost.Configuration;
 using DenHost.Harness;
+using DenHost.Harness.Modules.Hermes;
 using DenHost.Health;
 using DenHost.Host;
 using DenHost.Services;
@@ -117,36 +118,40 @@ public static class DenHostServiceCollectionExtensions
         services.AddSingleton<IHealthReporter, HealthReporter>();
 
         // --- Harness module slot -------------------------------------------
-        // For #1914 the only registered module is the Stub. Real harness
-        // modules are wired in #1917. We resolve them from HarnessOptions
-        // so the configuration slot is exercised end-to-end now.
+        // The first concrete harness module is Hermes (#1917). The factory
+        // here is the only DenHost code that names HermesHarnessModule;
+        // everything else uses IHarnessModule. Future modules will be
+        // added as additional Kind branches.
+        services.AddSingleton<IHermesProcessLauncher, SystemHermesProcessLauncher>();
         services.AddSingleton<IEnumerable<IHarnessModule>>(sp =>
         {
             var harness = sp.GetRequiredService<IOptions<HarnessOptions>>().Value;
+            var runtime = sp.GetRequiredService<IOptions<RuntimeOptions>>().Value;
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
             var list = new List<IHarnessModule>();
             foreach (var module in harness.Modules)
             {
-                if (!module.Enabled)
+                if (!module.Enabled) continue;
+                switch (module.Kind)
                 {
-                    continue;
-                }
-                if (module.Kind == HarnessModuleKind.Stub)
-                {
-                    list.Add(new StubHarnessModule(module.Name));
-                }
-                else
-                {
-                    // Real harness modules live in their own assemblies and
-                    // are loaded via MEF/MEF-like discovery in #1917. For
-                    // #1914, only Stub is supported; anything else is ignored
-                    // and logged so the operator can see the misconfiguration.
-                    var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
-                        .CreateLogger("DenHost.Harness");
-                    logger.LogWarning(
-                        "Harness module '{Name}' of kind {Kind} is configured but no real " +
-                        "module implementation is registered yet; it will not be loaded. " +
-                        "This is expected for #1914; real modules land in #1917.",
-                        module.Name, module.Kind);
+                    case HarnessModuleKind.Stub:
+                        list.Add(new StubHarnessModule(module.Name));
+                        break;
+                    case HarnessModuleKind.Hermes:
+                    {
+                        var settings = HermesModuleSettings.From(module.Settings);
+                        var launcher = sp.GetRequiredService<IHermesProcessLauncher>();
+                        var moduleLogger = loggerFactory.CreateLogger<HermesHarnessModule>();
+                        list.Add(new HermesHarnessModule(
+                            module.Name, settings, runtime.LogDir, runtime.RunDir, launcher, moduleLogger));
+                        break;
+                    }
+                    default:
+                        loggerFactory.CreateLogger("DenHost.Harness").LogWarning(
+                            "Harness module '{Name}' of kind {Kind} is configured but no implementation " +
+                            "is registered yet; it will not be loaded. Future work.",
+                            module.Name, module.Kind);
+                        break;
                 }
             }
             return list;
@@ -174,10 +179,12 @@ public static class DenHostServiceCollectionExtensions
         services.AddSingleton<RunCommand>();
         services.AddSingleton<BindingCommand>();
         services.AddSingleton<EventsCommand>();
+        services.AddSingleton<SmokeCommand>();
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<HealthCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<RunCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<BindingCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<EventsCommand>());
+        services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<SmokeCommand>());
         services.AddSingleton<CliDispatcher>();
 
         return services;
