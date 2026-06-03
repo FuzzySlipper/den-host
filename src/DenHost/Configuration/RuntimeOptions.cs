@@ -50,14 +50,6 @@ public sealed class RuntimeOptions
     public string QuarantineDir { get; init; } = ".runtime/quarantine";
 
     /// <summary>
-    /// Maximum age (in seconds) of a stored shadow-mode event cursor
-    /// before it is considered stale. Used by the Channels event reader
-    /// in #1916.
-    /// </summary>
-    [Range(1, 86_400 * 30)]
-    public int CursorMaxAgeSeconds { get; init; } = 86_400;
-
-    /// <summary>
     /// Interval in seconds between adapter binding heartbeats to Core.
     /// The first probe runs at host startup; subsequent probes run on
     /// this interval. Set to 0 to disable the heartbeat (one-shot
@@ -65,4 +57,18 @@ public sealed class RuntimeOptions
     /// </summary>
     [Range(0, 86_400)]
     public int BindingHeartbeatSeconds { get; init; } = 30;
+
+    /// <summary>
+    /// Interval in seconds between Channels direct-agent event reads
+    /// when running in shadow mode. Set to 0 to disable the background
+    /// reader (one-shot <c>den-host events tail</c> is still available).
+    /// </summary>
+    [Range(0, 86_400)]
+    public int ChannelsEventPollSeconds { get; init; } = 30;
+
+    /// <summary>
+    /// Page size for the Channels direct-agent event reader.
+    /// </summary>
+    [Range(1, 1_000)]
+    public int ChannelsEventPageSize { get; init; } = 50;
 }

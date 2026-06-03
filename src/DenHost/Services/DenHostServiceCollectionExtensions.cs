@@ -1,3 +1,4 @@
+using DenHost.Channels;
 using DenHost.Cli;
 using DenHost.Cli.Hosting;
 using DenHost.Clients;
@@ -151,9 +152,19 @@ public static class DenHostServiceCollectionExtensions
             return list;
         });
 
+        // --- Channels event reader (cursor + reader + shadow service) ------
+        services.AddSingleton(sp =>
+        {
+            var runtime = sp.GetRequiredService<IOptions<RuntimeOptions>>().Value;
+            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<EventCursorStore>();
+            return new EventCursorStore(runtime, logger);
+        });
+        services.AddSingleton<IChannelsEventReader, ChannelsEventReader>();
+
         // --- Background services ------------------------------------------
         services.AddHostedService<HostHeartbeatService>();
         services.AddHostedService<AdapterBindingHeartbeatService>();
+        services.AddHostedService<ChannelsEventReaderService>();
 
         // --- CLI surface ----------------------------------------------------
         // Help and version are built into CliDispatcher to avoid a circular
@@ -162,9 +173,11 @@ public static class DenHostServiceCollectionExtensions
         services.AddSingleton<HealthCommand>();
         services.AddSingleton<RunCommand>();
         services.AddSingleton<BindingCommand>();
+        services.AddSingleton<EventsCommand>();
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<HealthCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<RunCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<BindingCommand>());
+        services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<EventsCommand>());
         services.AddSingleton<CliDispatcher>();
 
         return services;

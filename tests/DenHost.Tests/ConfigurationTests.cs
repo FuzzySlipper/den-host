@@ -85,7 +85,9 @@ public class ConfigurationTests
             "StateDir": "/var/lib/den-host/state",
             "LogDir": "/var/log/den-host",
             "QuarantineDir": "/var/lib/den-host/quarantine",
-            "CursorMaxAgeSeconds": 3600
+            "BindingHeartbeatSeconds": 45,
+            "ChannelsEventPollSeconds": 60,
+            "ChannelsEventPageSize": 25
           }
         }
         """;
@@ -97,7 +99,9 @@ public class ConfigurationTests
         Assert.Equal("/var/lib/den-host/state", options.StateDir);
         Assert.Equal("/var/log/den-host", options.LogDir);
         Assert.Equal("/var/lib/den-host/quarantine", options.QuarantineDir);
-        Assert.Equal(3600, options.CursorMaxAgeSeconds);
+        Assert.Equal(45, options.BindingHeartbeatSeconds);
+        Assert.Equal(60, options.ChannelsEventPollSeconds);
+        Assert.Equal(25, options.ChannelsEventPageSize);
     }
 
     [Fact]
