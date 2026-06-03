@@ -8,6 +8,7 @@ using DenHost.Harness.Modules.Hermes;
 using DenHost.Health;
 using DenHost.Host;
 using DenHost.Services;
+using DenHost.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -166,10 +167,16 @@ public static class DenHostServiceCollectionExtensions
         });
         services.AddSingleton<IChannelsEventReader, ChannelsEventReader>();
 
+        // --- Local worker run registry + reconciliation -------------------
+        services.AddSingleton<RunRegistry>();
+        services.AddSingleton<ReconciliationService>();
+        services.AddSingleton<IReconciliationService>(sp => sp.GetRequiredService<ReconciliationService>());
+
         // --- Background services ------------------------------------------
         services.AddHostedService<HostHeartbeatService>();
         services.AddHostedService<AdapterBindingHeartbeatService>();
         services.AddHostedService<ChannelsEventReaderService>();
+        services.AddHostedService<ReconciliationService>();
 
         // --- CLI surface ----------------------------------------------------
         // Help and version are built into CliDispatcher to avoid a circular
@@ -180,11 +187,15 @@ public static class DenHostServiceCollectionExtensions
         services.AddSingleton<BindingCommand>();
         services.AddSingleton<EventsCommand>();
         services.AddSingleton<SmokeCommand>();
+        services.AddSingleton<ReconcileCommand>();
+        services.AddSingleton<QuarantineCommand>();
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<HealthCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<RunCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<BindingCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<EventsCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<SmokeCommand>());
+        services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<ReconcileCommand>());
+        services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<QuarantineCommand>());
         services.AddSingleton<CliDispatcher>();
 
         return services;

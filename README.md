@@ -165,7 +165,7 @@ anything inside its own assembly; den-host does not look at it.
 
 ## Status
 
-This is the bootstrap deliverable for den-host tasks #1914 through #1917.
+This is the bootstrap deliverable for den-host tasks #1914 through #1918.
 It ships:
 
 - repo skeleton, build, test
@@ -186,9 +186,17 @@ It ships:
   `den-host run` background service) that never mutates Core/Channels
   and never launches a worker; logs migration-diff notes for cutover
   comparison
+- Local worker run registry with per-run directories, PID files, log
+  pointers, and an unclean-shutdown marker; reconciliation service
+  (`den-host reconcile`, `den-host run` background service) handles the
+  4 branches (re-adopt, stale assignment, terminate, quarantine) and
+  writes structured evidence under `RuntimeOptions.QuarantineDir`;
+  `den-host quarantine list|show` inspects that evidence
 
-Task #1918 (worker run/process/session reconciliation and quarantine
-evidence) is the remaining item in the den-host starting task set.
+This completes the den-host starting task set. The Core contract for
+receiving reconciliation evidence is still pending; until it lands, the
+host writes evidence locally and logs that the in-line Core report is
+a known gap (see `ReconciliationService` notes).
 
 ## References
 
