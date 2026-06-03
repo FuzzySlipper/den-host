@@ -1,0 +1,38 @@
+## .NET / dotnet
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+## Build / test output
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+## Local config and runtime state
+# Local den-host config (never commit secrets or live endpoints):
+den-host.json
+den-host.*.json
+config/den-host.local.json
+# Local runtime dirs created at runtime:
+.runtime/
+run/
+state/
+quarantine/
+*.log
+*.pid
+
+## OS / editor
+.DS_Store
+Thumbs.db
+
+## Node / TS (only if anything in scripts/ pulls them in)
+node_modules/
+package-lock.json

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DenHost/DenHost.csproj" />
+    <Project Path="src/DenHost.Harness/DenHost.Harness.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DenHost.Tests/DenHost.Tests.csproj" />
+  </Folder>
+</Solution>

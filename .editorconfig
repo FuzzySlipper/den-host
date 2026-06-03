@@ -1,0 +1,18 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{json,yml,yaml,md,csproj,props,targets,slnx,config}]
+indent_size = 2
+
+[*.cs]
+# C# 12+ file-scoped namespaces, nullable on
+csharp_style_namespace_declarations = file_scoped:suggestion
+dotnet_diagnostic.CS8618.severity = warning  # non-nullable uninitialized
+dotnet_diagnostic.CS8625.severity = warning  # null literal to non-nullable

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>DenHost.Harness</AssemblyName>
+    <RootNamespace>DenHost.Harness</RootNamespace>
+    <!--
+      DenHost.Harness is the firewall assembly.
+      It defines the harness module interface that all concrete
+      harness modules (Hermes, Pi, Codex, Claude Code, OpenCode,
+      future Den-native actor runtime) implement.
+      DenHost depends on it. Harness modules depend on it.
+      DenHost must NOT depend on any harness module assembly.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>
