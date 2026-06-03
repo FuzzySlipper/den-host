@@ -9,9 +9,12 @@ using Microsoft.Extensions.Options;
 namespace DenHost.Clients;
 
 /// <summary>
-/// HTTP client for the Channels endpoint. Mirrors <see cref="CoreClient"/>
-/// for the probe path and adds direct-agent event reads (used by the
-/// shadow-mode reader in den-host task #1916).
+/// HTTP client for the Channels endpoint. Mirrors
+/// <see cref="CoreClient"/> in structure. All public methods are
+/// side-effect-free for the host (no local state mutation); they
+/// only talk to Channels over HTTP. Failure paths return structured
+/// results rather than throwing, so the den-host shadow reader and
+/// background services can decide locally what to do.
 /// </summary>
 public sealed class ChannelsClient : IChannelsClient
 {
@@ -35,12 +38,13 @@ public sealed class ChannelsClient : IChannelsClient
         {
             return ProbeResult.Unreachable(null, 0, "Channels:HealthPath not configured");
         }
-
         return await ProbeAsync(HttpMethod.Get, path, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<DirectAgentEventPage> GetDirectAgentEventsAsync(
-        string? cursor,
+    public async Task<ChannelsEventPage> GetDirectAgentEventsAsync(
+        long? channelId,
+        string? projectId,
+        long? afterId,
         int limit,
         CancellationToken cancellationToken)
     {
@@ -48,29 +52,103 @@ public sealed class ChannelsClient : IChannelsClient
         {
             throw new ArgumentOutOfRangeException(nameof(limit), limit, "Limit must be positive.");
         }
+        if (channelId is null && string.IsNullOrWhiteSpace(projectId))
+        {
+            throw new ArgumentException("Provide either channelId or projectId.");
+        }
 
-        var path = _options.DirectAgentEventsPath;
+        var path = _options.EventsListPath;
         if (string.IsNullOrWhiteSpace(path))
         {
-            // Channels event endpoint is genuinely required for #1916; for #1914 we
-            // surface this as an empty page rather than throwing, so the health
-            // command still works.
-            return new DirectAgentEventPage(Array.Empty<DirectAgentEvent>(), null);
+            // No list path configured; the reader treats this as "endpoint
+            // not implemented" without crashing.
+            return new ChannelsEventPage(Array.Empty<ChannelsEvent>(), null, HasMore: false, EndpointImplemented: false);
         }
 
-        var query = $"limit={Uri.EscapeDataString(limit.ToString(System.Globalization.CultureInfo.InvariantCulture))}";
-        if (!string.IsNullOrEmpty(cursor))
+        var query = new List<string>
         {
-            query += $"&cursor={Uri.EscapeDataString(cursor)}";
+            $"limit={Uri.EscapeDataString(limit.ToString(System.Globalization.CultureInfo.InvariantCulture))}",
+        };
+        if (channelId is long cid)
+        {
+            query.Add($"channelId={Uri.EscapeDataString(cid.ToString(System.Globalization.CultureInfo.InvariantCulture))}");
         }
-
-        var fullPath = path.Contains('?') ? $"{path}&{query}" : $"{path}?{query}";
+        if (!string.IsNullOrEmpty(projectId))
+        {
+            query.Add($"projectId={Uri.EscapeDataString(projectId)}");
+        }
+        if (afterId is long aid)
+        {
+            query.Add($"afterId={Uri.EscapeDataString(aid.ToString(System.Globalization.CultureInfo.InvariantCulture))}");
+        }
+        var fullPath = path.Contains('?') ? $"{path}&{string.Join("&", query)}" : $"{path}?{string.Join("&", query)}";
 
         using var message = new HttpRequestMessage(HttpMethod.Get, fullPath);
-        if (!string.IsNullOrEmpty(_options.ApiKey))
+        AddAuthIfPresent(message);
+
+        try
         {
-            message.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
+            using var response = await _http
+                .SendAsync(message, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new ChannelsEventPage(Array.Empty<ChannelsEvent>(), null, HasMore: false, EndpointImplemented: false);
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await SafeReadBodyAsync(response, cancellationToken).ConfigureAwait(false);
+                throw new HttpRequestException(
+                    $"Channels list read failed: {(int)response.StatusCode} {response.ReasonPhrase}. {body}");
+            }
+
+            var envelope = await response.Content
+                .ReadFromJsonAsync<ChannelsEventListEnvelope>(s_jsonOptions, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (envelope is null)
+            {
+                return new ChannelsEventPage(Array.Empty<ChannelsEvent>(), null, HasMore: false, EndpointImplemented: true);
+            }
+            return new ChannelsEventPage(
+                Items: envelope.Items ?? Array.Empty<ChannelsEvent>(),
+                NextAfterId: envelope.NextAfterId,
+                HasMore: envelope.HasMore,
+                EndpointImplemented: true);
         }
+        catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogDebug(ex, "Channels list read timed out");
+            throw new HttpRequestException("Channels list read timed out", ex);
+        }
+        catch (HttpRequestException)
+        {
+            throw;
+        }
+    }
+
+    public async Task<ChannelsEventReadback?> GetDirectAgentEventAsync(
+        long eventId,
+        CancellationToken cancellationToken)
+    {
+        if (eventId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(eventId), eventId, "Event id must be positive.");
+        }
+        var path = _options.DirectAgentEventPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+        var fullPath = $"{path.TrimEnd('/')}/{Uri.EscapeDataString(eventId.ToString(System.Globalization.CultureInfo.InvariantCulture))}";
+
+        using var message = new HttpRequestMessage(HttpMethod.Get, fullPath);
+        AddAuthIfPresent(message);
 
         using var response = await _http
             .SendAsync(message, HttpCompletionOption.ResponseContentRead, cancellationToken)
@@ -78,24 +156,26 @@ public sealed class ChannelsClient : IChannelsClient
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            // Endpoint not yet implemented on Channels. Return an empty page so
-            // shadow-mode consumers can run without crashing. #1916 will surface
-            // this as a blocker evidence file if the endpoint is missing.
-            return new DirectAgentEventPage(Array.Empty<DirectAgentEvent>(), null);
+            return null;
         }
-
         if (!response.IsSuccessStatusCode)
         {
             var body = await SafeReadBodyAsync(response, cancellationToken).ConfigureAwait(false);
             throw new HttpRequestException(
-                $"Channels event read failed: {(int)response.StatusCode} {response.ReasonPhrase}. {body}");
+                $"Channels event readback failed: {(int)response.StatusCode} {response.ReasonPhrase}. {body}");
         }
 
-        var page = await response.Content
-            .ReadFromJsonAsync<DirectAgentEventPage>(s_jsonOptions, cancellationToken)
+        return await response.Content
+            .ReadFromJsonAsync<ChannelsEventReadback>(s_jsonOptions, cancellationToken)
             .ConfigureAwait(false);
+    }
 
-        return page ?? new DirectAgentEventPage(Array.Empty<DirectAgentEvent>(), null);
+    private void AddAuthIfPresent(HttpRequestMessage message)
+    {
+        if (!string.IsNullOrEmpty(_options.ApiKey))
+        {
+            message.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
+        }
     }
 
     private async Task<ProbeResult> ProbeAsync(HttpMethod method, string path, CancellationToken cancellationToken)
@@ -104,10 +184,7 @@ public sealed class ChannelsClient : IChannelsClient
         try
         {
             using var message = new HttpRequestMessage(method, path);
-            if (!string.IsNullOrEmpty(_options.ApiKey))
-            {
-                message.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
-            }
+            AddAuthIfPresent(message);
 
             using var response = await _http
                 .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
@@ -118,7 +195,6 @@ public sealed class ChannelsClient : IChannelsClient
             {
                 return ProbeResult.Ok((int)response.StatusCode, sw.ElapsedMilliseconds);
             }
-
             return ProbeResult.Unreachable(
                 (int)response.StatusCode,
                 sw.ElapsedMilliseconds,
@@ -158,5 +234,19 @@ public sealed class ChannelsClient : IChannelsClient
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Wire shape of the den-channels list response
+    /// (<c>GatewayEventsDto</c>). The reader does not need
+    /// <c>HasMore</c> for paging (it uses <c>NextAfterId</c> directly)
+    /// but Channels always returns it; we surface it on
+    /// <see cref="ChannelsEventPage"/> for diagnostics.
+    /// </summary>
+    private sealed class ChannelsEventListEnvelope
+    {
+        public IReadOnlyList<ChannelsEvent>? Items { get; set; }
+        public long? NextAfterId { get; set; }
+        public bool HasMore { get; set; }
     }
 }

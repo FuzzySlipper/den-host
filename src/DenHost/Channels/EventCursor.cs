@@ -6,8 +6,10 @@ namespace DenHost.Channels;
 
 /// <summary>
 /// Persists the Channels direct-agent event cursor for the shadow-mode
-/// reader. Atomic temp-file + File.Move(overwrite) so a partial write
-/// cannot leave the host in a confused state on restart.
+/// reader. The cursor is a long message id (the last row id from the
+/// previous page); Channels returns it as NextAfterId. Atomic
+/// temp-file + File.Move(overwrite) so a partial write cannot leave
+/// the host in a confused state on restart.
 /// </summary>
 public sealed class EventCursorStore
 {
@@ -31,9 +33,10 @@ public sealed class EventCursorStore
     public string CursorFilePath => Path.Combine(_runtime.StateDir, CursorFileName);
 
     /// <summary>
-    /// Read the most recently saved cursor, or null if no cursor is on disk.
+    /// Read the most recently saved after-id, or null if no cursor
+    /// is on disk.
     /// </summary>
-    public async Task<string?> ReadAsync(CancellationToken cancellationToken)
+    public async Task<long?> ReadAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(CursorFilePath))
         {
@@ -44,7 +47,7 @@ public sealed class EventCursorStore
             await using var stream = File.OpenRead(CursorFilePath);
             var dto = await JsonSerializer.DeserializeAsync<CursorDto>(stream, s_jsonOptions, cancellationToken)
                 .ConfigureAwait(false);
-            return dto?.Cursor;
+            return dto?.AfterId;
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -54,13 +57,13 @@ public sealed class EventCursorStore
     }
 
     /// <summary>
-    /// Atomically write the cursor. A null cursor deletes the file.
+    /// Atomically write the after-id. A null value deletes the file.
     /// </summary>
-    public async Task WriteAsync(string? cursor, CancellationToken cancellationToken)
+    public async Task WriteAsync(long? afterId, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_runtime.StateDir);
 
-        if (cursor is null)
+        if (afterId is null)
         {
             try
             {
@@ -73,7 +76,7 @@ public sealed class EventCursorStore
             return;
         }
 
-        var dto = new CursorDto(cursor, DateTimeOffset.UtcNow);
+        var dto = new CursorDto(afterId.Value, DateTimeOffset.UtcNow);
         var json = JsonSerializer.Serialize(dto, s_jsonOptions);
         await WriteAtomicAsync(CursorFilePath, json, cancellationToken).ConfigureAwait(false);
     }
@@ -101,5 +104,5 @@ public sealed class EventCursorStore
         }
     }
 
-    private sealed record CursorDto(string Cursor, DateTimeOffset WrittenAt);
+    private sealed record CursorDto(long AfterId, DateTimeOffset WrittenAt);
 }

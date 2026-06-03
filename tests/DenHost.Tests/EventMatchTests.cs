@@ -15,18 +15,37 @@ public class EventMatchTests
         ManagedCapabilities = Array.Empty<string>(),
     };
 
-    private static DirectAgentEvent Event(
-        string eventId = "evt-1",
+    private static ChannelsEvent Event(
+        long eventId = 1,
+        string? sourceKind = "wake_event",
         string? poolMemberId = null,
-        string? role = null,
-        int? assignmentId = null,
-        string? runId = null) => new(
+        string? workerRole = null,
+        string? assignmentId = null,
+        string? workerRunId = null) => new(
         EventId: eventId,
-        CreatedAt: DateTimeOffset.UtcNow,
-        Sender: "user-1",
-        ReplyContext: null,
-        Source: new SourceContext("den-host", null, null, null, null),
-        Target: new TargetWork(assignmentId, runId, poolMemberId, role));
+        ChannelId: 1,
+        MessageKind: "human_text",
+        SenderType: "user",
+        SenderIdentity: "u",
+        SourceKind: sourceKind,
+        SourceId: "direct-agent-message:1:h:abc",
+        SourceProjectId: "den-host",
+        TargetProjectId: "den-host",
+        TargetTaskId: null,
+        AssignmentId: assignmentId,
+        WorkerRunId: workerRunId,
+        WorkerRole: workerRole,
+        ProfileIdentity: null,
+        PoolMemberId: poolMemberId,
+        AgentInstanceId: null,
+        SessionOwnerId: null,
+        SessionId: null,
+        DeliveryRequestId: null,
+        DedupeKey: null,
+        DeepLink: null,
+        Summary: "wake",
+        Body: "go",
+        CreatedAt: DateTimeOffset.UtcNow);
 
     [Fact]
     public void PoolMemberIdMatch_IsForUsWithWakeIntended()
@@ -41,7 +60,7 @@ public class EventMatchTests
     [Fact]
     public void RoleMatch_IsForUsWithWakeIntended()
     {
-        var outcome = EventMatcher.Match(Event(role: "coder"), Identity("coder", "reviewer"));
+        var outcome = EventMatcher.Match(Event(workerRole: "coder"), Identity("coder", "reviewer"));
         Assert.True(outcome.IsForUs);
         Assert.Equal("role_match", outcome.Reason);
         Assert.Equal("wake", outcome.IntendedAction);
@@ -50,7 +69,7 @@ public class EventMatchTests
     [Fact]
     public void RoleMismatch_NotForUs()
     {
-        var outcome = EventMatcher.Match(Event(role: "validator"), Identity("coder", "reviewer"));
+        var outcome = EventMatcher.Match(Event(workerRole: "validator"), Identity("coder", "reviewer"));
         Assert.False(outcome.IsForUs);
         Assert.Equal("no_matching_target", outcome.Reason);
         Assert.Null(outcome.IntendedAction);
@@ -75,19 +94,27 @@ public class EventMatchTests
     }
 
     [Fact]
-    public void AssignmentAddressedButNotPool_NotForUs_AndExplainsWhy()
+    public void AssignmentIdPresent_HeldForCoreCheck()
     {
-        var outcome = EventMatcher.Match(Event(assignmentId: 42), Identity("coder"));
-        Assert.False(outcome.IsForUs);
-        Assert.Contains("assignment_id=42", outcome.MigrationDiffNote);
+        var outcome = EventMatcher.Match(Event(assignmentId: "42"), Identity("coder"));
+        Assert.True(outcome.IsForUs);
+        Assert.Equal("assignment_or_run_present", outcome.Reason);
+        Assert.Equal("hold_for_core_check", outcome.IntendedAction);
+        Assert.False(outcome.WouldWake);
+    }
+
+    [Fact]
+    public void WorkerRunIdPresent_HeldForCoreCheck()
+    {
+        var outcome = EventMatcher.Match(Event(workerRunId: "run-7"), Identity("coder"));
+        Assert.True(outcome.IsForUs);
+        Assert.Equal("assignment_or_run_present", outcome.Reason);
     }
 
     [Fact]
     public void PoolMemberTakesPrecedenceOverRole()
     {
-        // If both pool member and role match, the pool_member match wins
-        // (it's a more specific match). The reason reflects this.
-        var outcome = EventMatcher.Match(Event(poolMemberId: "den-host-01", role: "coder"), Identity("coder"));
+        var outcome = EventMatcher.Match(Event(poolMemberId: "den-host-01", workerRole: "coder"), Identity("coder"));
         Assert.True(outcome.IsForUs);
         Assert.Equal("pool_member_match", outcome.Reason);
     }
@@ -95,7 +122,7 @@ public class EventMatchTests
     [Fact]
     public void RoleMatch_IsCaseInsensitive()
     {
-        var outcome = EventMatcher.Match(Event(role: "CODER"), Identity("coder"));
+        var outcome = EventMatcher.Match(Event(workerRole: "CODER"), Identity("coder"));
         Assert.True(outcome.IsForUs);
         Assert.Equal("role_match", outcome.Reason);
     }

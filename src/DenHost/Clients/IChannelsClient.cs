@@ -1,67 +1,96 @@
 namespace DenHost.Clients;
 
 /// <summary>
-/// Source-context metadata attached to a direct-agent Channels event.
-/// All fields are Den-facing: no Hermes profile, no harness-specific
-/// session/process/path data leaks through this shape.
+/// One row in a Channels event list response. Mirrors the wire
+/// shape of den-channels <c>GatewayEventItemDto</c> (which is the
+/// current list response for both /api/gateway/events and the
+/// single-event GET /api/direct-agent-events/{eventId} readback).
+/// The shape is intentionally flat -- the source/target split is
+/// implicit in field naming (SourceXxx / TargetXxx).
+/// All fields are optional in the wire protocol; the matcher only
+/// looks at a small subset.
 /// </summary>
-/// <param name="ProjectId">Project the event belongs to (e.g. "den-host").</param>
-/// <param name="TaskId">Optional task id the event targets.</param>
-/// <param name="MessageId">Channels message id, when sourced from a message.</param>
-/// <param name="RoomId">Channels room id, when sourced from a room activity.</param>
-/// <param name="ActivityId">Channels activity id, when sourced from an activity record.</param>
-public sealed record SourceContext(
-    string? ProjectId,
-    int? TaskId,
-    int? MessageId,
-    int? RoomId,
-    int? ActivityId);
-
-/// <summary>
-/// Target-work metadata attached to a direct-agent Channels event.
-/// Identifies the assignment / run / pool member the event wants woken.
-/// </summary>
-/// <param name="AssignmentId">Core assignment id, if assigned.</param>
-/// <param name="RunId">Core worker-run id, if a run is registered.</param>
-/// <param name="PoolMemberId">Pool member id, if a pool member is the target.</param>
-/// <param name="Role">Generic Den role name (e.g. "coder", "reviewer").</param>
-public sealed record TargetWork(
-    int? AssignmentId,
-    string? RunId,
+public sealed record ChannelsEvent(
+    long EventId,
+    long ChannelId,
+    string MessageKind,
+    string SenderType,
+    string SenderIdentity,
+    string? SourceKind,
+    string? SourceId,
+    string? SourceProjectId,
+    string? TargetProjectId,
+    long? TargetTaskId,
+    string? AssignmentId,
+    string? WorkerRunId,
+    string? WorkerRole,
+    string? ProfileIdentity,
     string? PoolMemberId,
-    string? Role);
+    string? AgentInstanceId,
+    string? SessionOwnerId,
+    string? SessionId,
+    string? DeliveryRequestId,
+    string? DedupeKey,
+    string? DeepLink,
+    string? Summary,
+    string? Body,
+    DateTimeOffset CreatedAt);
 
 /// <summary>
-/// A single direct-agent Channels event the host can shadow-read.
+/// One page of Channels events. The cursor is the long message id
+/// from the last row of the previous page (or null on the first read).
 /// </summary>
-/// <param name="EventId">Server-side event id (used as cursor).</param>
-/// <param name="CreatedAt">Server-side creation timestamp.</param>
-/// <param name="Sender">Logical sender identity (e.g. user identity, agent identity).</param>
-/// <param name="ReplyContext">Optional reply context (parent message id, etc.).</param>
-/// <param name="Source">Source-context metadata.</param>
-/// <param name="Target">Target-work metadata.</param>
-public sealed record DirectAgentEvent(
-    string EventId,
-    DateTimeOffset CreatedAt,
-    string Sender,
-    ReplyContext? ReplyContext,
-    SourceContext Source,
-    TargetWork Target);
+/// <param name="Items">Events in the page, in the order returned by Channels (typically ascending by id).</param>
+/// <param name="NextAfterId">
+/// Long message id to pass on the next call to resume after this page.
+/// Null when the page exhausted the stream.
+/// </param>
+/// <param name="HasMore">Channels hint that more events are available.</param>
+/// <param name="EndpointImplemented">
+/// False if the endpoint returned 404 (or its equivalent) so the
+/// reader should report "endpoint not implemented" rather than
+/// silently treating an empty page as caught-up. Set to true when
+/// the page came from a live implementation.
+/// </param>
+public sealed record ChannelsEventPage(
+    IReadOnlyList<ChannelsEvent> Items,
+    long? NextAfterId,
+    bool HasMore,
+    bool EndpointImplemented);
 
 /// <summary>
-/// Optional reply context attached to a direct-agent event.
+/// Single-event readback from GET /api/direct-agent-events/{eventId}.
+/// Includes the full attribution set (source / target / session /
+/// delivery / claim / completion) and a free-text body. Used by the
+/// future wake path's "I have an event id, fetch its details" flow.
 /// </summary>
-public sealed record ReplyContext(int? ParentMessageId, string? ThreadId);
-
-/// <summary>
-/// Page of direct-agent events read from Channels, plus the cursor
-/// that should be passed on the next call to resume after this page.
-/// </summary>
-/// <param name="Events">Events in the page, ordered by event id ascending.</param>
-/// <param name="NextCursor">Cursor for the next page; null if the page exhausted the stream.</param>
-public sealed record DirectAgentEventPage(
-    IReadOnlyList<DirectAgentEvent> Events,
-    string? NextCursor);
+public sealed record ChannelsEventReadback(
+    long EventId,
+    long ChannelId,
+    string RequestId,
+    string MessageKind,
+    string SenderType,
+    string SenderIdentity,
+    string MemberIdentity,
+    string WakePolicy,
+    string? SourceKind,
+    string? SourceProjectId,
+    string? TargetProjectId,
+    long? TargetTaskId,
+    string? AssignmentId,
+    string? WorkerRunId,
+    string? WorkerRole,
+    string? ProfileIdentity,
+    string? PoolMemberId,
+    string? AgentInstanceId,
+    string? SessionOwnerId,
+    string? SessionId,
+    string? Summary,
+    string Body,
+    string? DeliveryStatus,
+    string? ClaimStatus,
+    string? CompletionStatus,
+    DateTimeOffset CreatedAt);
 
 /// <summary>
 /// HTTP client contract for the Channels endpoint.
@@ -75,20 +104,27 @@ public interface IChannelsClient
     Task<ProbeResult> GetHealthAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Reads a page of direct-agent events. Used by the shadow-mode
-    /// event reader (den-host task #1916). The cursor is opaque
-    /// and is round-tripped as a string.
+    /// Reads a page of direct-agent events from the configured list
+    /// endpoint. Used by the shadow-mode reader (den-host task #1916).
+    /// The query is scoped by either <paramref name="channelId"/> or
+    /// <paramref name="projectId"/>; <paramref name="afterId"/> is
+    /// the long message id from the last row of the previous page
+    /// (or null on the first read). The reader writes the next
+    /// afterId to its cursor store on a successful read.
     /// </summary>
-    /// <param name="cursor">
-    /// Opaque cursor returned by a previous call. Null to read from
-    /// the start of the stream (or as far back as Channels retains).
-    /// </param>
-    /// <param name="limit">
-    /// Maximum events to return in this page. Caller-chosen, host-side.
-    /// </param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    Task<DirectAgentEventPage> GetDirectAgentEventsAsync(
-        string? cursor,
+    Task<ChannelsEventPage> GetDirectAgentEventsAsync(
+        long? channelId,
+        string? projectId,
+        long? afterId,
         int limit,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads a single direct-agent event by id from the primary
+    /// Channels-owned readback (GET /api/direct-agent-events/{eventId}).
+    /// Returns null if the event is not found.
+    /// </summary>
+    Task<ChannelsEventReadback?> GetDirectAgentEventAsync(
+        long eventId,
         CancellationToken cancellationToken);
 }

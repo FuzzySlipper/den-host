@@ -107,8 +107,11 @@ public class HealthReporterTests
         private readonly ProbeResult _health;
         public FakeChannelsClient(ProbeResult health) { _health = health; }
         public Task<ProbeResult> GetHealthAsync(CancellationToken cancellationToken) => Task.FromResult(_health);
-        public Task<DirectAgentEventPage> GetDirectAgentEventsAsync(string? cursor, int limit, CancellationToken cancellationToken) =>
-            Task.FromResult(new DirectAgentEventPage(Array.Empty<DirectAgentEvent>(), null));
+        public Task<ChannelsEventPage> GetDirectAgentEventsAsync(
+            long? channelId, string? projectId, long? afterId, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult(new ChannelsEventPage(Array.Empty<ChannelsEvent>(), null, HasMore: false, EndpointImplemented: true));
+        public Task<ChannelsEventReadback?> GetDirectAgentEventAsync(long eventId, CancellationToken cancellationToken) =>
+            Task.FromResult<ChannelsEventReadback?>(null);
     }
 
     private sealed class FakeBindingProvider : DenHost.Host.IBindingHealthProvider

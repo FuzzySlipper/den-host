@@ -50,15 +50,15 @@ public class EventCursorStoreTests : IDisposable
     public async Task WriteAsync_RoundTripsThroughRead()
     {
         var store = BuildStore();
-        await store.WriteAsync("cursor-abc-123", CancellationToken.None);
-        Assert.Equal("cursor-abc-123", await store.ReadAsync(CancellationToken.None));
+        await store.WriteAsync(12345, CancellationToken.None);
+        Assert.Equal(12345, await store.ReadAsync(CancellationToken.None));
     }
 
     [Fact]
-    public async Task WriteAsync_WithNullCursor_DeletesFile()
+    public async Task WriteAsync_WithNullAfterId_DeletesFile()
     {
         var store = BuildStore();
-        await store.WriteAsync("cursor-1", CancellationToken.None);
+        await store.WriteAsync(42, CancellationToken.None);
         Assert.True(File.Exists(store.CursorFilePath));
         await store.WriteAsync(null, CancellationToken.None);
         Assert.False(File.Exists(store.CursorFilePath));

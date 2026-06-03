@@ -90,6 +90,10 @@ public static class DenHostServiceCollectionExtensions
         // it directly. The Options system already runs ValidateOnStart, so
         // a single source of truth (IOptions<RuntimeOptions>.Value) is fine.
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<RuntimeOptions>>().Value);
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<CoreOptions>>().Value);
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ChannelsOptions>>().Value);
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AdapterOptions>>().Value);
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<HarnessOptions>>().Value);
 
         // --- HTTP clients (typed, with BaseAddress from options) -----------
         services.AddHttpClient<ICoreClient, CoreClient>((sp, client) =>

@@ -97,7 +97,7 @@ dotnet run -- help
 |------------|-----------------------------------------------------------------|
 | `Adapter`  | Identity of this host as seen by Core/Channels.                 |
 | `Core`     | Core endpoint: base URL, health path, binding path, timeout.    |
-| `Channels` | Channels endpoint: base URL, health path, events path, timeout. |
+| `Channels` | Channels endpoint: base URL, health path, list/event paths, scope (channelId / projectId), timeout. |
 | `Runtime`  | Local filesystem layout: run/state/log/quarantine dirs.         |
 | `Harness`  | List of configured harness modules (name, kind, settings).      |
 
@@ -183,9 +183,12 @@ It ships:
 - adapter binding heartbeat (`den-host binding`, `den-host run` background
   service) with blocker evidence when Core lacks the binding endpoint
 - Channels direct-agent shadow reader (`den-host events tail`,
-  `den-host run` background service) that never mutates Core/Channels
-  and never launches a worker; logs migration-diff notes for cutover
-  comparison
+  `den-host events get <eventId>`, `den-host run` background service)
+  that never mutates Core/Channels and never launches a worker; logs
+  migration-diff notes for cutover comparison. The list reader targets
+  the transitional /api/gateway/events route; the single-event readback
+  targets the primary GET /api/direct-agent-events/{eventId} contract
+  (den-channels #1902).
 - Local worker run registry with per-run directories, PID files, log
   pointers, and an unclean-shutdown marker; reconciliation service
   (`den-host reconcile`, `den-host run` background service) handles the

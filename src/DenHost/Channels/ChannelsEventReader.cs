@@ -5,34 +5,41 @@ using Microsoft.Extensions.Logging;
 namespace DenHost.Channels;
 
 /// <summary>
-/// Reads a single page of Channels direct-agent events and produces a
-/// list of match outcomes. Pure (apart from the Channels HTTP call and
-/// the local cursor file): no worker launch, no harness module invocation.
-/// Used by both the <c>den-host events tail</c> one-shot CLI command
-/// and the <c>ChannelsEventReaderService</c> background service.
+/// Reads a single page of Channels direct-agent events and produces
+/// a list of match outcomes. Pure (apart from the Channels HTTP
+/// call and the local cursor file): no worker launch, no harness
+/// module invocation. Used by both the <c>den-host events tail</c>
+/// one-shot CLI command and the <c>ChannelsEventReaderService</c>
+/// background service.
 /// </summary>
 public interface IChannelsEventReader
 {
-    Task<ChannelsEventReadResult> ReadPageAsync(int pageSize, CancellationToken cancellationToken);
+    Task<ChannelsEventReadResult> ReadPageAsync(ChannelsEventReadQuery query, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Query for a single Channels event read. At least one of
+/// <see cref="ChannelId"/> or <see cref="ProjectId"/> must be set;
+/// the underlying endpoint requires it.
+/// </summary>
+public sealed record ChannelsEventReadQuery(
+    long? ChannelId,
+    string? ProjectId,
+    long? AfterId,
+    int PageSize);
 
 /// <summary>
 /// Result of a single Channels event read.
 /// </summary>
-/// <param name="Page">
-/// The page returned by Channels. Events is empty if the endpoint is missing
-/// or returned 404; NextCursor is the cursor to pass on the next call.
-/// </param>
-/// <param name="Outcomes">
-/// One match outcome per event, in the same order as the page.
-/// </param>
+/// <param name="Page">The page returned by Channels.</param>
+/// <param name="Outcomes">One match outcome per wake_event item, in the same order as the page.</param>
 /// <param name="EndpointImplemented">
 /// False if the Channels endpoint returned 404 (or its equivalent), meaning
 /// the den-channels #1902 contract is not yet live. The reader should log
 /// this so an operator can see the situation without trawling logs.
 /// </param>
 public sealed record ChannelsEventReadResult(
-    DirectAgentEventPage Page,
+    ChannelsEventPage Page,
     IReadOnlyList<EventMatchOutcome> Outcomes,
     bool EndpointImplemented);
 
@@ -55,45 +62,51 @@ internal sealed class ChannelsEventReader : IChannelsEventReader
         _logger = logger;
     }
 
-    public async Task<ChannelsEventReadResult> ReadPageAsync(int pageSize, CancellationToken cancellationToken)
+    public async Task<ChannelsEventReadResult> ReadPageAsync(ChannelsEventReadQuery query, CancellationToken cancellationToken)
     {
-        if (pageSize <= 0)
+        if (query.PageSize <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(pageSize), pageSize, "Page size must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(query), query.PageSize, "PageSize must be positive.");
         }
 
-        var cursor = await _cursorStore.ReadAsync(cancellationToken).ConfigureAwait(false);
-        DirectAgentEventPage page;
+        // If the caller did not supply an explicit afterId, fall back to the
+        // cursor on disk. This is the normal "background polling" path.
+        var afterId = query.AfterId ?? await _cursorStore.ReadAsync(cancellationToken).ConfigureAwait(false);
+        ChannelsEventPage page;
         try
         {
-            page = await _channels.GetDirectAgentEventsAsync(cursor, pageSize, cancellationToken).ConfigureAwait(false);
+            page = await _channels.GetDirectAgentEventsAsync(
+                query.ChannelId, query.ProjectId, afterId, query.PageSize, cancellationToken).ConfigureAwait(false);
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogWarning(ex, "Channels direct-agent event read failed; cursor={Cursor}", cursor);
-            // Bubble out as an "endpoint missing" result so the caller can
-            // decide whether to retry or surface as a blocker. We do NOT
-            // advance the cursor on a failed read.
+            _logger.LogWarning(ex, "Channels list read failed; after_id={AfterId}", afterId);
             return new ChannelsEventReadResult(
-                new DirectAgentEventPage(Array.Empty<DirectAgentEvent>(), cursor),
+                new ChannelsEventPage(Array.Empty<ChannelsEvent>(), afterId, HasMore: false, EndpointImplemented: false),
                 Array.Empty<EventMatchOutcome>(),
                 EndpointImplemented: false);
         }
 
-        var outcomes = new List<EventMatchOutcome>(page.Events.Count);
-        foreach (var evt in page.Events)
+        // Only wake_events get matched; everything else is filtered before
+        // the matcher runs so the matcher's "for us / not for us" decision
+        // is meaningful for the wake path.
+        var outcomes = new List<EventMatchOutcome>(page.Items.Count);
+        foreach (var evt in page.Items)
         {
+            if (!string.Equals(evt.SourceKind, "wake_event", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             outcomes.Add(EventMatcher.Match(evt, _identity));
         }
 
-        // Advance the cursor only on a successful read, even if the page is
-        // empty (the endpoint exists; the host is just caught up). This
-        // matches the typical cursor-advances-on-empty-page contract.
-        if (page.NextCursor is not null)
+        // Advance the cursor on a successful read, even if the page is
+        // empty (the endpoint exists; the host is just caught up).
+        if (page.NextAfterId is long nextId)
         {
-            await _cursorStore.WriteAsync(page.NextCursor, cancellationToken).ConfigureAwait(false);
+            await _cursorStore.WriteAsync(nextId, cancellationToken).ConfigureAwait(false);
         }
 
-        return new ChannelsEventReadResult(page, outcomes, EndpointImplemented: true);
+        return new ChannelsEventReadResult(page, outcomes, EndpointImplemented: page.EndpointImplemented);
     }
 }

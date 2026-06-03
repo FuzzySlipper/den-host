@@ -63,8 +63,30 @@ public sealed class ChannelsOptions : EndpointOptions
     public const string SectionName = "Channels";
 
     /// <summary>
-    /// Optional path for the direct-agent event stream. Defaults to
-    /// /api/direct-agent/events.
+    /// Path for the list-endpoint the shadow reader polls. Defaults to
+    /// the transitional /api/gateway/events list route; the primary
+    /// contract surface is POST /api/direct-agent-events plus
+    /// GET /api/direct-agent-events/{eventId}, which are reachable
+    /// through the single-event readback method on IChannelsClient.
     /// </summary>
-    public string DirectAgentEventsPath { get; init; } = "/api/direct-agent/events";
+    public string EventsListPath { get; init; } = "/api/gateway/events";
+
+    /// <summary>
+    /// Optional channel id to scope the list read. If null, the
+    /// reader falls back to <see cref="EventsListProjectId"/>.
+    /// </summary>
+    public long? EventsListChannelId { get; init; }
+
+    /// <summary>
+    /// Optional project id to resolve a default channel for the list
+    /// read. Only used when <see cref="EventsListChannelId"/> is null.
+    /// </summary>
+    public string? EventsListProjectId { get; init; }
+
+    /// <summary>
+    /// Path for the primary single-event readback (GET
+    /// /api/direct-agent-events/{eventId}). Used by the future wake
+    /// path's "I have an event id, fetch its details" flow.
+    /// </summary>
+    public string DirectAgentEventPath { get; init; } = "/api/direct-agent-events";
 }

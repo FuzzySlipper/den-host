@@ -10,22 +10,25 @@ namespace DenHost.Services;
 /// <summary>
 /// Background service that polls Channels for direct-agent events in
 /// shadow mode. Each tick reads a page, logs the match outcomes for
-/// every event (with the migration-diff note), and never launches a
-/// worker. The service is the long-lived form of
+/// every wake event (with the migration-diff note), and never launches
+/// a worker. The service is the long-lived form of
 /// <c>den-host events tail</c>; the one-shot CLI uses the same reader.
 /// </summary>
 public sealed class ChannelsEventReaderService : BackgroundService
 {
     private readonly IChannelsEventReader _reader;
+    private readonly ChannelsOptions _channels;
     private readonly RuntimeOptions _runtime;
     private readonly ILogger<ChannelsEventReaderService> _logger;
 
     public ChannelsEventReaderService(
         IChannelsEventReader reader,
+        ChannelsOptions channels,
         RuntimeOptions runtime,
         ILogger<ChannelsEventReaderService> logger)
     {
         _reader = reader;
+        _channels = channels;
         _runtime = runtime;
         _logger = logger;
     }
@@ -44,8 +47,8 @@ public sealed class ChannelsEventReaderService : BackgroundService
         var pageSize = _runtime.ChannelsEventPageSize;
         var interval = TimeSpan.FromSeconds(intervalSeconds);
         _logger.LogInformation(
-            "Channels event reader starting; interval={Seconds}s page_size={PageSize}",
-            intervalSeconds, pageSize);
+            "Channels event reader starting; interval={Seconds}s page_size={PageSize} channel_id={ChannelId} project_id={ProjectId}",
+            intervalSeconds, pageSize, _channels.EventsListChannelId, _channels.EventsListProjectId);
 
         var consecutiveEndpointMissing = 0;
         using var timer = new PeriodicTimer(interval);
@@ -55,31 +58,39 @@ public sealed class ChannelsEventReaderService : BackgroundService
             {
                 try
                 {
-                    var result = await _reader.ReadPageAsync(pageSize, stoppingToken).ConfigureAwait(false);
+                    var query = new ChannelsEventReadQuery(
+                        ChannelId: _channels.EventsListChannelId,
+                        ProjectId: _channels.EventsListProjectId,
+                        AfterId: null,
+                        PageSize: pageSize);
+                    var result = await _reader.ReadPageAsync(query, stoppingToken).ConfigureAwait(false);
                     if (!result.EndpointImplemented)
                     {
                         consecutiveEndpointMissing++;
                         if (consecutiveEndpointMissing == 1 || consecutiveEndpointMissing % 5 == 0)
                         {
                             _logger.LogWarning(
-                                "Channels direct-agent event endpoint not implemented (consecutive_missing={Count}). " +
-                                "den-channels #1902 may not be live yet; the shadow reader will keep polling. " +
-                                "Use the one-shot 'den-host events tail' to inspect manually.",
+                                "Channels list endpoint not implemented (consecutive_missing={Count}). " +
+                                "The shadow reader will keep polling. " +
+                                "Use 'den-host events tail' to inspect manually.",
                                 consecutiveEndpointMissing);
                         }
                         continue;
                     }
                     consecutiveEndpointMissing = 0;
 
-                    if (result.Page.Events.Count == 0)
+                    if (result.Page.Items.Count == 0)
                     {
-                        _logger.LogDebug("Channels event read: 0 events; cursor={Cursor}", result.Page.NextCursor);
+                        _logger.LogDebug(
+                            "Channels event read: 0 items; after_id={AfterId}",
+                            result.Page.NextAfterId);
                         continue;
                     }
 
                     foreach (var outcome in result.Outcomes)
                     {
-                        LogOutcome(result.Page.Events.First(e => e.EventId == outcome.EventId), outcome);
+                        var evt = result.Page.Items.First(e => e.EventId == outcome.EventId);
+                        LogOutcome(evt, outcome);
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -98,10 +109,10 @@ public sealed class ChannelsEventReaderService : BackgroundService
         }
     }
 
-    private void LogOutcome(DirectAgentEvent evt, EventMatchOutcome outcome)
+    private void LogOutcome(ChannelsEvent evt, EventMatchOutcome outcome)
     {
-        var targetDesc = DescribeTarget(evt.Target);
-        var sourceDesc = DescribeSource(evt.Source);
+        var targetDesc = DescribeTarget(evt);
+        var sourceDesc = DescribeSource(evt);
         if (outcome.IsForUs)
         {
             _logger.LogInformation(
@@ -116,9 +127,9 @@ public sealed class ChannelsEventReaderService : BackgroundService
         }
     }
 
-    private static string DescribeTarget(TargetWork target) =>
-        $"pool_member={target.PoolMemberId ?? "-"} role={target.Role ?? "-"} assignment={target.AssignmentId?.ToString() ?? "-"} run={target.RunId ?? "-"}";
+    private static string DescribeTarget(ChannelsEvent evt) =>
+        $"pool_member={evt.PoolMemberId ?? "-"} worker_role={evt.WorkerRole ?? "-"} assignment={evt.AssignmentId ?? "-"} worker_run={evt.WorkerRunId ?? "-"}";
 
-    private static string DescribeSource(SourceContext source) =>
-        $"project={source.ProjectId ?? "-"} task={source.TaskId?.ToString() ?? "-"} message={source.MessageId?.ToString() ?? "-"} room={source.RoomId?.ToString() ?? "-"}";
+    private static string DescribeSource(ChannelsEvent evt) =>
+        $"project={evt.SourceProjectId ?? "-"} target_project={evt.TargetProjectId ?? "-"} target_task={evt.TargetTaskId?.ToString() ?? "-"} sender={evt.SenderIdentity}";
 }
