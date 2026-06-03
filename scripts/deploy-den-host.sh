@@ -239,6 +239,23 @@ else
   sudo -n chmod 644 "$CONFIG_PATH"
 fi
 
+# Install the logrotate config so the per-run log files do not
+# accumulate without bound. Substitute the runtime dir and service
+# user into the template at install time.
+if [[ -f "$publish_stage/den-host.logrotate" ]]; then
+  echo "Installing logrotate config to /etc/logrotate.d/den-host ..."
+  tmp_logrotate="$(mktemp /tmp/den-host.logrotate.XXXXXX)"
+  sed \
+    -e "s|@RUNTIME_DIR@|$RUNTIME_DIR|g" \
+    -e "s|@SERVICE_USER@|$SERVICE_USER|g" \
+    -e "s|@SERVICE_GROUP@|$SERVICE_GROUP|g" \
+    "$publish_stage/den-host.logrotate" > "$tmp_logrotate"
+  sudo -n install -d -m 0755 /etc/logrotate.d
+  sudo -n cp "$tmp_logrotate" /etc/logrotate.d/den-host
+  sudo -n chmod 644 /etc/logrotate.d/den-host
+  rm -f "$tmp_logrotate"
+fi
+
 # Install systemd user service unit.
 local_service_dir="/etc/systemd/system"
 sudo -n install -d -m 0755 "$local_service_dir"
@@ -321,6 +338,12 @@ RuntimeDirectoryMode=0750
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 
+# Pin the working directory to the runtime dir. den-host writes its
+# per-run log files under $DEN_HOST_LOG_DIR (a subdir of RUNTIME_DIR),
+# so an unset cwd would land us in / and confuse the relative-path log
+# tee inside HermesHarnessModule.WakeAsync.
+WorkingDirectory=${RUNTIME_DIR}
+
 # Hardening
 ProtectSystem=full
 PrivateTmp=yes
@@ -329,6 +352,25 @@ NoNewPrivileges=yes
 [Install]
 WantedBy=multi-user.target
 EOF_SERVICE
+}
+
+preflight_config() {
+  # Startup-time config validation precheck. Run `den-host health --no-fail`
+  # before declaring the install successful. This catches obvious
+  # misconfigurations (missing endpoints, bad URLs) at install time
+  # rather than letting the service start and fail in journalctl. The
+  # `--no-fail` flag is intentional: a degraded health report (e.g.,
+  # Core unreachable in dev) is not an install failure; we just want
+  # to surface it.
+  if [[ "$DEPLOY_MODE" == "remote" ]]; then
+    echo "Running remote startup precheck on $SSH_TARGET ..."
+    ssh "$SSH_TARGET" "$(shell_quote "${BINARY_DIR}/den-host") health --no-fail" </dev/null || \
+      echo "(startup precheck returned non-zero; review the output above before continuing.)"
+  else
+    echo "Running local startup precheck ..."
+    "${BINARY_DIR}/den-host" health --no-fail || \
+      echo "(startup precheck returned non-zero; review the output above before continuing.)"
+  fi
 }
 
 smoke_binary() {
@@ -375,6 +417,21 @@ sync_binary_local() {
     echo "Config exists at $CONFIG_PATH; preserving. Example at $REPO_ROOT/config/den-host.example.json."
   fi
 
+  # Install the logrotate config so per-run log files do not accumulate.
+  if [[ -f "$REPO_ROOT/scripts/den-host.logrotate" ]]; then
+    echo "Installing logrotate config to /etc/logrotate.d/den-host ..."
+    tmp_logrotate="$(mktemp /tmp/den-host.logrotate.XXXXXX)"
+    sed \
+      -e "s|@RUNTIME_DIR@|$RUNTIME_DIR|g" \
+      -e "s|@SERVICE_USER@|$SERVICE_USER|g" \
+      -e "s|@SERVICE_GROUP@|$SERVICE_GROUP|g" \
+      "$REPO_ROOT/scripts/den-host.logrotate" > "$tmp_logrotate"
+    sudo_local install -d -m 0755 /etc/logrotate.d
+    sudo_local cp "$tmp_logrotate" /etc/logrotate.d/den-host
+    sudo_local chmod 644 /etc/logrotate.d/den-host
+    rm -f "$tmp_logrotate"
+  fi
+
   # Generate and install the systemd service unit.
   local tmp_unit
   tmp_unit="$(mktemp /tmp/den-host.service.XXXXXX)"
@@ -396,6 +453,9 @@ sync_binary_remote() {
   rsync -a --delete "$PUBLISH_DIR/" "$SSH_TARGET:$REMOTE_STAGE_DIR/publish/"
   # Also upload the example config for remote install.
   rsync -a "$REPO_ROOT/config/den-host.example.json" "$SSH_TARGET:$REMOTE_STAGE_DIR/publish/"
+  if [[ -f "$REPO_ROOT/scripts/den-host.logrotate" ]]; then
+    rsync -a "$REPO_ROOT/scripts/den-host.logrotate" "$SSH_TARGET:$REMOTE_STAGE_DIR/publish/"
+  fi
 
   local remote_env remote_install_path
   remote_install_path="$REMOTE_STAGE_DIR/install-den-host.sh"
@@ -443,8 +503,15 @@ main() {
   # remote install script can copy it.
   generate_service_unit "$PUBLISH_DIR/den-host.service"
 
+  # Copy the logrotate template so the remote install script can
+  # install it with the right substitutions.
+  if [[ -f "$REPO_ROOT/scripts/den-host.logrotate" ]]; then
+    cp "$REPO_ROOT/scripts/den-host.logrotate" "$PUBLISH_DIR/den-host.logrotate"
+  fi
+
   publish_binary
   sync_binary
+  preflight_config
   smoke_binary
   echo "Deploy complete."
 }

@@ -1,0 +1,39 @@
+# logrotate config for den-host.
+#
+# Den Host writes per-run log files under its RuntimeOptions.LogDir
+# (default /var/lib/den-host/log on systemd installs). This config rotates
+# them daily, keeps 14 days, compresses the old ones, and trims anything
+# older than 30 days so a forgotten run does not fill the disk.
+#
+# Install by symlinking into /etc/logrotate.d/ :
+#   sudo ln -s /home/dev/den-host/scripts/den-host.logrotate \
+#       /etc/logrotate.d/den-host
+# The deploy script does this for you (see scripts/deploy-den-host.sh).
+#
+# The RUNTIME_DIR is expanded at install time by deploy-den-host.sh
+# (sed substitutes @RUNTIME_DIR@ before the symlink is created). If you
+# install this file by hand, replace @RUNTIME_DIR@ with your actual
+# log dir (e.g. /var/lib/den-host/log).
+#
+# Test:
+#   logrotate -d /etc/logrotate.d/den-host
+# Force a run:
+#   logrotate -f /etc/logrotate.d/den-host
+
+@RUNTIME_DIR@/log/*.log {
+    daily
+    rotate 14
+    maxage 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 @SERVICE_USER@ @SERVICE_GROUP@
+    sharedscripts
+    postrotate
+        # den-host does not currently keep a long-lived log file handle; the
+        # only persistent handles are per-run and they are closed when the
+        # process exits. There is nothing to reopen on logrotate.
+        :
+    endscript
+}

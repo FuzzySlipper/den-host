@@ -183,9 +183,36 @@ public sealed class SystemHermesProcessLauncher : IHermesProcessLauncher
 public sealed class HermesHarnessModule : IHarnessModule
 {
     public const string DefaultHermesBinary = "hermes";
+
+    /// <summary>
+    /// Last-resort fallback for HERMES_HOME when the operator has not
+    /// configured <c>Settings.home</c> and the $HERMES_HOME environment
+    /// variable is unset. Correct for the den-k8 host; on other machines,
+    /// either set the env var or set <c>Settings.home</c> in den-host.json.
+    /// </summary>
     public const string DefaultHermesHome = "/home/agent/.hermes";
+
     public static readonly TimeSpan DefaultSmokeTimeout = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan DefaultWakeTimeout = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Describes how the Hermes home directory was resolved.
+    /// </summary>
+    public enum HermesHomeSource
+    {
+        /// <summary>Set explicitly in the harness module's <c>Settings.home</c>.</summary>
+        Config = 0,
+        /// <summary>Discovered from the <c>HERMES_HOME</c> environment variable.</summary>
+        Environment = 1,
+        /// <summary>Fell back to the hardcoded <c>DefaultHermesHome</c>.</summary>
+        Default = 2,
+    }
+
+    /// <summary>
+    /// Resolved Hermes home with the source it came from. The home
+    /// is passed to the child hermes process as the HERMES_HOME env var.
+    /// </summary>
+    public sealed record ResolvedHermesHome(string Value, HermesHomeSource Source);
 
     private readonly HermesModuleSettings _settings;
     private readonly string _logDir;
@@ -298,19 +325,58 @@ public sealed class HermesHarnessModule : IHarnessModule
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        // Background task to flush stdout/stderr into the log file.
+        // Background tee that flushes stdout/stderr into the log file.
+        // Uses the same position-based slicing pattern as
+        // SystemHermesProcessLauncher: read from the last persisted offset
+        // instead of mutating the StringBuilder. This avoids both the
+        // StringBuilder.Clear() race (where OutputDataReceived could append
+        // between read and clear) and the unobserved-exception risk of a
+        // fire-and-forget _ = Task.Run(...) lambda. The catch here is
+        // last-resort: a tee failure must not crash the host, and the
+        // WorkerHandle we return is still valid (operator can collect
+        // evidence from whatever made it to disk).
         _ = Task.Run(async () =>
         {
-            while (!process.HasExited)
+            try
             {
-                await Task.Delay(200, cancellationToken).ConfigureAwait(false);
-                if (stdout.Length > 0) { await logWriter.WriteLineAsync("[stdout] " + stdout).ConfigureAwait(false); stdout.Clear(); }
-                if (stderr.Length > 0) { await logWriter.WriteLineAsync("[stderr] " + stderr).ConfigureAwait(false); stderr.Clear(); }
+                var lastStdoutLen = 0;
+                var lastStderrLen = 0;
+                while (!process.HasExited)
+                {
+                    await Task.Delay(200, cancellationToken).ConfigureAwait(false);
+                    if (stdout.Length > lastStdoutLen)
+                    {
+                        var chunk = stdout.ToString(lastStdoutLen, stdout.Length - lastStdoutLen);
+                        await logWriter.WriteLineAsync("[stdout] " + chunk.TrimEnd()).ConfigureAwait(false);
+                        lastStdoutLen = stdout.Length;
+                    }
+                    if (stderr.Length > lastStderrLen)
+                    {
+                        var chunk = stderr.ToString(lastStderrLen, stderr.Length - lastStderrLen);
+                        await logWriter.WriteLineAsync("[stderr] " + chunk.TrimEnd()).ConfigureAwait(false);
+                        lastStderrLen = stderr.Length;
+                    }
+                    await logWriter.FlushAsync().ConfigureAwait(false);
+                }
+                // Final flush after the process has exited.
+                if (stdout.Length > lastStdoutLen)
+                {
+                    await logWriter.WriteLineAsync("[stdout] " + stdout.ToString(lastStdoutLen, stdout.Length - lastStdoutLen).TrimEnd()).ConfigureAwait(false);
+                }
+                if (stderr.Length > lastStderrLen)
+                {
+                    await logWriter.WriteLineAsync("[stderr] " + stderr.ToString(lastStderrLen, stderr.Length - lastStderrLen).TrimEnd()).ConfigureAwait(false);
+                }
                 await logWriter.FlushAsync().ConfigureAwait(false);
             }
-            if (stdout.Length > 0) await logWriter.WriteLineAsync("[stdout] " + stdout).ConfigureAwait(false);
-            if (stderr.Length > 0) await logWriter.WriteLineAsync("[stderr] " + stderr).ConfigureAwait(false);
-            await logWriter.FlushAsync().ConfigureAwait(false);
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Normal shutdown.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Hermes wake: log tee task failed for {RunId}; wake handle is still valid", localRunId);
+            }
         }, cancellationToken);
 
         return new WorkerHandle(
@@ -430,6 +496,7 @@ public sealed class HermesHarnessModule : IHarnessModule
         }
 
         var invocation = BuildSmokeInvocation();
+        var home = ResolveHome();
         try
         {
             var result = await _launcher.RunAsync(invocation, DefaultSmokeTimeout, cancellationToken).ConfigureAwait(false);
@@ -437,15 +504,15 @@ public sealed class HermesHarnessModule : IHarnessModule
             {
                 var firstLine = result.StandardOutput.Split('\n').FirstOrDefault()?.Trim() ?? "";
                 return new HarnessSmokeResult(Name, Kind, HarnessSmokeOutcome.Passed,
-                    $"hermes binary returned 0; first line: {firstLine}");
+                    $"hermes binary returned 0; first line: {firstLine}; home={home.Value} (source={home.Source.ToString().ToLowerInvariant()})");
             }
             return new HarnessSmokeResult(Name, Kind, HarnessSmokeOutcome.Failed,
-                $"hermes --version exited {result.ExitCode}; stderr: {result.StandardError.Trim()}");
+                $"hermes --version exited {result.ExitCode}; stderr: {result.StandardError.Trim()}; home={home.Value} (source={home.Source.ToString().ToLowerInvariant()})");
         }
         catch (Exception ex)
         {
             return new HarnessSmokeResult(Name, Kind, HarnessSmokeOutcome.Failed,
-                $"hermes smoke threw: {ex.GetType().Name}: {ex.Message}");
+                $"hermes smoke threw: {ex.GetType().Name}: {ex.Message}; home={home.Value} (source={home.Source.ToString().ToLowerInvariant()})");
         }
     }
 
@@ -476,7 +543,7 @@ public sealed class HermesHarnessModule : IHarnessModule
 
         var env = new Dictionary<string, string>
         {
-            ["HERMES_HOME"] = _settings.Home ?? DefaultHermesHome,
+            ["HERMES_HOME"] = ResolveHome().Value,
             ["HERMES_PROFILE"] = _settings.Profile!,
             ["DEN_HOST_MODULE"] = Name,
             ["DEN_HOST_LOCAL_RUN_ID"] = localRunId,
@@ -492,11 +559,32 @@ public sealed class HermesHarnessModule : IHarnessModule
         var args = new List<string> { "--version" };
         var env = new Dictionary<string, string>
         {
-            ["HERMES_HOME"] = _settings.Home ?? DefaultHermesHome,
+            ["HERMES_HOME"] = ResolveHome().Value,
             ["HERMES_PROFILE"] = _settings.Profile!,
         };
         var logFile = Path.Combine(_logDir, $"hermes-smoke-{Name}-{Guid.NewGuid():N}.log");
         return new HermesInvocation(binary, args, env, Environment.CurrentDirectory, logFile);
+    }
+
+    /// <summary>
+    /// Resolve the Hermes home directory. Order: explicit
+    /// <c>Settings.home</c>, then <c>$HERMES_HOME</c>, then
+    /// <c>DefaultHermesHome</c>. Returns the value plus the source
+    /// so callers (the smoke detail line) can tell operators which
+    /// one was used.
+    /// </summary>
+    public ResolvedHermesHome ResolveHome()
+    {
+        if (!string.IsNullOrWhiteSpace(_settings.Home))
+        {
+            return new ResolvedHermesHome(_settings.Home!, HermesHomeSource.Config);
+        }
+        var envHome = Environment.GetEnvironmentVariable("HERMES_HOME");
+        if (!string.IsNullOrWhiteSpace(envHome))
+        {
+            return new ResolvedHermesHome(envHome, HermesHomeSource.Environment);
+        }
+        return new ResolvedHermesHome(DefaultHermesHome, HermesHomeSource.Default);
     }
 
     private string? ResolveBinaryPath()

@@ -118,6 +118,105 @@ public class HermesHarnessModuleTests : IDisposable
     }
 
     [Fact]
+    public async Task SmokeAsync_PassedDetailIncludesResolvedHomeAndSource()
+    {
+        // Use the real hermes binary on this host so the smoke genuinely
+        // passes. We pin the config home to a known value and assert the
+        // detail line surfaces that home and the source label.
+        // (Skip rather than Assert.True so the test self-skips on hosts
+        // without a hermes install instead of failing.)
+        var hermesBinary = "/home/agent/.hermes/hermes-agent/.venv/bin/hermes";
+        if (!File.Exists(hermesBinary)) return; // hermes not installed on this host
+        var module = Build("h", BuildSettings(binaryPath: hermesBinary, home: "/configured/home", profile: "den-mcp-runner"),
+            new FakeLauncher(_ => MakeVersionResult()));
+
+        var result = await module.SmokeAsync(CancellationToken.None);
+
+        Assert.Equal(HarnessSmokeOutcome.Passed, result.Outcome);
+        Assert.Contains("home=/configured/home", result.Detail);
+        Assert.Contains("source=config", result.Detail);
+    }
+
+    [Fact]
+    public void ResolveHome_ConfigTakesPrecedence()
+    {
+        var module = Build("h", BuildSettings(binaryPath: "/bin/true", home: "/from/config", profile: "p"),
+            new FakeLauncher(_ => MakeVersionResult()));
+        var resolved = module.ResolveHome();
+        Assert.Equal("/from/config", resolved.Value);
+        Assert.Equal(HermesHarnessModule.HermesHomeSource.Config, resolved.Source);
+    }
+
+    [Fact]
+    public void ResolveHome_EnvVarTakesPrecedenceOverDefault()
+    {
+        Environment.SetEnvironmentVariable("HERMES_HOME", "/from/env");
+        try
+        {
+            var module = Build("h", BuildSettings(binaryPath: "/bin/true", home: null, profile: "p"),
+                new FakeLauncher(_ => MakeVersionResult()));
+            var resolved = module.ResolveHome();
+            Assert.Equal("/from/env", resolved.Value);
+            Assert.Equal(HermesHarnessModule.HermesHomeSource.Environment, resolved.Source);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HERMES_HOME", null);
+        }
+    }
+
+    [Fact]
+    public void ResolveHome_ConfigBeatsEnvVar()
+    {
+        Environment.SetEnvironmentVariable("HERMES_HOME", "/from/env");
+        try
+        {
+            var module = Build("h", BuildSettings(binaryPath: "/bin/true", home: "/from/config", profile: "p"),
+                new FakeLauncher(_ => MakeVersionResult()));
+            var resolved = module.ResolveHome();
+            Assert.Equal("/from/config", resolved.Value);
+            Assert.Equal(HermesHarnessModule.HermesHomeSource.Config, resolved.Source);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HERMES_HOME", null);
+        }
+    }
+
+    [Fact]
+    public void ResolveHome_FallsBackToDefaultWhenNothingSet()
+    {
+        Environment.SetEnvironmentVariable("HERMES_HOME", null);
+        var module = Build("h", BuildSettings(binaryPath: "/bin/true", home: null, profile: "p"),
+            new FakeLauncher(_ => MakeVersionResult()));
+        var resolved = module.ResolveHome();
+        Assert.Equal(HermesHarnessModule.DefaultHermesHome, resolved.Value);
+        Assert.Equal(HermesHarnessModule.HermesHomeSource.Default, resolved.Source);
+    }
+
+    [Fact]
+    public void BuildInvocation_UsesResolvedHomeInEnv()
+    {
+        // When the operator does not set Settings.home but $HERMES_HOME is
+        // set, the wake invocation's env must use the env value.
+        Environment.SetEnvironmentVariable("HERMES_HOME", "/from/env");
+        try
+        {
+            var module = Build("h", BuildSettings(binaryPath: "/bin/true", home: null, profile: "p"),
+                new FakeLauncher(_ => MakeVersionResult()));
+            var envelope = new WakeEnvelope("den-host", 1917, null, null, "harness:h:p", "coder", null);
+
+            var inv = module.BuildInvocation(envelope, "local-run-1");
+
+            Assert.Equal("/from/env", inv.Environment["HERMES_HOME"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HERMES_HOME", null);
+        }
+    }
+
+    [Fact]
     public async Task GetCapabilitiesAsync_DerivesFromRoles()
     {
         var module = Build("h", BuildSettings(roles: new[] { "coder", "reviewer" }, profile: "p"),
