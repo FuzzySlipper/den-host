@@ -3,6 +3,7 @@ using DenHost.Cli;
 using DenHost.Cli.Hosting;
 using DenHost.Clients;
 using DenHost.Configuration;
+using DenHost.FleetOps;
 using DenHost.Harness;
 using DenHost.Harness.Modules.Hermes;
 using DenHost.Health;
@@ -77,6 +78,19 @@ public static class DenHostServiceCollectionExtensions
             .Bind(configuration.GetSection(HarnessOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+
+        // --- FleetOps options (no ValidateOnStart — optional section) -------
+        services.AddOptions<FleetOpsOptions>()
+            .Bind(configuration.GetSection(FleetOpsOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<FleetOpsOptions>>().Value);
+
+        // --- FleetOps services ------------------------------------------------
+        services.AddSingleton<FleetOpsActionRegistry>();
+        services.AddSingleton<IFleetOpsServiceUnitDiscovery, SystemdFleetOpsDiscovery>();
+        services.AddSingleton<IFleetOpsCommandExecutor, ProcessFleetOpsCommandExecutor>();
+        services.AddSingleton<IFleetOpsRunStore, InMemoryFleetOpsRunStore>();
+        services.AddSingleton<FleetOpsService>();
+        services.AddHostedService<FleetOpsHostedService>();
 
         // --- Adapter identity (singleton, derived from options) -------------
         services.AddSingleton(sp =>
