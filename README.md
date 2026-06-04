@@ -201,6 +201,60 @@ receiving reconciliation evidence is still pending; until it lands, the
 host writes evidence locally and logs that the in-line Core report is
 a known gap (see `ReconciliationService` notes).
 
+## Deploy
+
+The deploy script (`scripts/deploy-den-host.sh`) uses a two-phase workflow so normal
+agents can build without privilege and sysadmin handles the system install.
+
+### Phase 1 — build (any agent, no sudo needed)
+
+```bash
+scripts/deploy-den-host.sh --build-only
+```
+
+This compiles a self-contained single-file binary, generates the systemd service unit,
+and prints the publish directory path. No `sudo` required. The output looks like:
+
+```
+Build-only mode. Publish directory: /tmp/den-host-live-publish.XXXXXX
+Install plan for --install-from:
+  sudo scripts/deploy-den-host.sh --install-from /tmp/den-host-live-publish.XXXXXX
+```
+
+### Phase 2 — install (sysadmin)
+
+```bash
+sudo scripts/deploy-den-host.sh --install-from /tmp/den-host-live-publish.XXXXXX
+```
+
+This installs the binary to `/usr/local/bin/den-host`, sets up runtime directories
+under `/var/lib/den-host/`, installs the systemd service unit, creates API key
+environment files at `/etc/den-host.env`, and configures log rotation.
+
+The publish directory is consumed by this command (the temp dir is cleaned up).
+Use `--skip-restart` to install without restarting the service.
+
+### One-shot agent workflow
+
+```bash
+# Build only (any agent, no sudo):
+scripts/deploy-den-host.sh --build-only
+
+# Hand off the printed path to sysadmin for install, or run:
+den-host version
+den-host health --no-fail
+den-host smoke
+```
+
+### SSH tunnel note
+
+den-host connects to Core (`127.0.0.1:5299`) and Channels (`127.0.0.1:18081`)
+via SSH tunnels from den-srv. These tunnels are managed separately by the
+infrastructure account (`agent-sysadmin`); the deploy script does not configure
+tunnels. If you are deploying on a machine that does not already have tunnels
+to den-srv, set `Core:BaseUrl` and `Channels:BaseUrl` in `den-host.json` to
+directly reachable network addresses instead.
+
 ## References
 
 - `den-host/project-brief` — boundary, non-goals, design-smell checklist

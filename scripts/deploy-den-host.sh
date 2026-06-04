@@ -9,14 +9,16 @@ DEPLOY_MODE="${DEPLOY_MODE:-auto}"
 SSH_TARGET="${SSH_TARGET:-den-k8}"
 BINARY_DIR="${BINARY_DIR:-/usr/local/bin}"
 SERVICE_NAME="${SERVICE_NAME:-den-host.service}"
-SERVICE_USER="${SERVICE_USER:-$(whoami)}"
-SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn)}"
+SERVICE_USER="${SERVICE_USER:-agent}"
+SERVICE_GROUP="${SERVICE_GROUP:-agents}"
 CONFIG_PATH="${CONFIG_PATH:-$REPO_ROOT/den-host.json}"
 RUNTIME_DIR="${RUNTIME_DIR:-/var/lib/den-host}"
 REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/den-host-live-publish}"
 SKIP_RESTART=0
 SKIP_SMOKE=0
 DRY_RUN=0
+BUILD_ONLY=0
+INSTALL_FROM=""
 TEMP_PUBLISH_DIR_CREATED=0
 TEMP_BUILD_ARTIFACTS_DIR_CREATED=0
 
@@ -29,23 +31,34 @@ on a remote host. The binary is published as a self-contained single-file
 executable so .NET SDK is not required on the target machine.
 
 Modes:
-  local   Install on the current machine. Creates runtime dirs and optionally
-          registers a systemd user service for persistent den-host run.
-  remote  Build locally and upload to SSH_TARGET, then install remotely.
+  local        Install on the current machine. Creates runtime dirs and
+               registers a systemd system service.
+  remote       Build locally and upload to SSH_TARGET, then install remotely.
+  build-only   Build only, no install. Prints the install plan for a
+               privileged agent or user to run. No sudo required.
 
 DEPLOY_MODE defaults to auto. Auto selects local when running from /home/dev
 on den-k8, otherwise remote.
+
+Two-phase deploy workflow (agent-friendly):
+  Phase 1 (any agent):  scripts/deploy-den-host.sh --build-only
+  Phase 2 (sysadmin):   scripts/deploy-den-host.sh --install-from /tmp/den-host-live-publish.XXXXXX
+
+This split lets a normal agent build the binary (no sudo needed) and then
+pass the publish directory to a privileged agent for system install.
 
 Do not run this script itself with sudo. In local mode it uses non-interactive
 sudo internally for install steps. In remote mode it uses SSH plus remote sudo.
 
 Options:
-  --local          Force local deployment mode
-  --remote         Force remote SSH deployment mode
-  --skip-restart   Install binary but do not restart/enable systemd service
-  --skip-smoke     Do not run den-host smoke checks after deploy
-  --dry-run        Print resolved config and validate; no build/upload/install
-  -h, --help       Show this help
+  --local                 Force local deployment mode
+  --remote                Force remote SSH deployment mode
+  --build-only            Build and publish only; skip install. Prints install plan.
+  --install-from <dir>    Skip build; install from a pre-built publish directory.
+  --skip-restart          Install binary but do not restart/enable systemd service
+  --skip-smoke            Do not run den-host smoke checks after deploy
+  --dry-run               Print resolved config and validate; no build/upload/install
+  -h, --help              Show this help
 
 Environment overrides:
   DEPLOY_MODE, SSH_TARGET, SERVICE_NAME, SERVICE_USER, SERVICE_GROUP,
@@ -59,6 +72,8 @@ parse_args() {
     case "$1" in
       --local)        DEPLOY_MODE=local ;;
       --remote)       DEPLOY_MODE=remote ;;
+      --build-only)   BUILD_ONLY=1 ;;
+      --install-from) INSTALL_FROM="$2"; shift ;;
       --skip-restart) SKIP_RESTART=1 ;;
       --skip-smoke)   SKIP_SMOKE=1 ;;
       --dry-run)      DRY_RUN=1 ;;
@@ -99,6 +114,8 @@ Resolved deploy configuration:
   SERVICE_GROUP=$SERVICE_GROUP
   CONFIG_PATH=$CONFIG_PATH
   RUNTIME_DIR=$RUNTIME_DIR
+  BUILD_ONLY=$BUILD_ONLY
+  INSTALL_FROM=${INSTALL_FROM:-<none>}
   SKIP_RESTART=$SKIP_RESTART
   SKIP_SMOKE=$SKIP_SMOKE
 EOF_CONFIG
@@ -126,13 +143,22 @@ require_non_root() {
 }
 
 preflight_privilege() {
+  # Build-only and dry-run modes don't need sudo.
+  if [[ "$BUILD_ONLY" -eq 1 || "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
   if [[ "$DEPLOY_MODE" == "local" ]]; then
     if ! sudo -n true 2>/dev/null; then
       cat >&2 <<EOF
 Deploy preflight failed: local mode requires non-interactive sudo for
 installing the binary to $BINARY_DIR and setting up runtime dirs under
-$RUNTIME_DIR. Alternatively, set BINARY_DIR and RUNTIME_DIR to paths
-your user owns.
+$RUNTIME_DIR.
+
+You have two options:
+  1) Run with --build-only to build the binary, then ask a sysadmin agent
+     to run: scripts/deploy-den-host.sh --install-from <publish-dir>
+  2) Set BINARY_DIR and RUNTIME_DIR to paths your user owns.
 EOF
       exit 1
     fi
@@ -148,6 +174,11 @@ EOF
 }
 
 initialize_publish_dir() {
+  if [[ -n "$INSTALL_FROM" ]]; then
+    PUBLISH_DIR="$INSTALL_FROM"
+    echo "Using pre-built publish directory: $PUBLISH_DIR"
+    return
+  fi
   if [[ -n "$PUBLISH_DIR" ]]; then
     rm -rf "$PUBLISH_DIR"
     mkdir -p "$PUBLISH_DIR"
@@ -158,6 +189,9 @@ initialize_publish_dir() {
 }
 
 initialize_build_artifacts_dir() {
+  if [[ -n "$INSTALL_FROM" ]]; then
+    return
+  fi
   if [[ -n "$BUILD_ARTIFACTS_DIR" ]]; then
     rm -rf "$BUILD_ARTIFACTS_DIR"
     mkdir -p "$BUILD_ARTIFACTS_DIR"
@@ -239,6 +273,11 @@ else
   sudo -n chmod 644 "$CONFIG_PATH"
 fi
 
+  # Warn if the API key environment file is missing.
+  if [[ ! -f /etc/den-host.env ]]; then
+    echo "WARNING: /etc/den-host.env not found. Create it with DEN_HOST_CORE_API_KEY and DEN_HOST_CHANNELS_API_KEY."
+  fi
+
 # Install the logrotate config so the per-run log files do not
 # accumulate without bound. Substitute the runtime dir and service
 # user into the template at install time.
@@ -256,7 +295,7 @@ if [[ -f "$publish_stage/den-host.logrotate" ]]; then
   rm -f "$tmp_logrotate"
 fi
 
-# Install systemd user service unit.
+# Install systemd system service unit.
 local_service_dir="/etc/systemd/system"
 sudo -n install -d -m 0755 "$local_service_dir"
 sudo -n cp "$publish_stage/den-host.service" "$local_service_dir/$SERVICE_NAME"
@@ -310,7 +349,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
 ExecStart=${BINARY_DIR}/den-host run
 Restart=on-failure
 RestartSec=10
@@ -331,6 +370,8 @@ Environment="DEN_HOST_QUARANTINE_DIR=${RUNTIME_DIR}/quarantine"
 # Environment="DEN_HOST_CHANNELS_API_KEY=..."
 # Do NOT embed secrets in the unit file.
 
+EnvironmentFile=/etc/den-host.env
+
 # RuntimeDirectories are created by systemd before ExecStart.
 RuntimeDirectory=den-host
 RuntimeDirectoryMode=0750
@@ -339,7 +380,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 
 # Pin the working directory to the runtime dir. den-host writes its
-# per-run log files under $DEN_HOST_LOG_DIR (a subdir of RUNTIME_DIR),
+# per-run log files under \$DEN_HOST_LOG_DIR (a subdir of RUNTIME_DIR),
 # so an unset cwd would land us in / and confuse the relative-path log
 # tee inside HermesHarnessModule.WakeAsync.
 WorkingDirectory=${RUNTIME_DIR}
@@ -355,11 +396,11 @@ EOF_SERVICE
 }
 
 preflight_config() {
-  # Startup-time config validation precheck. Run `den-host health --no-fail`
+  # Startup-time config validation precheck. Run \`den-host health --no-fail\`
   # before declaring the install successful. This catches obvious
   # misconfigurations (missing endpoints, bad URLs) at install time
   # rather than letting the service start and fail in journalctl. The
-  # `--no-fail` flag is intentional: a degraded health report (e.g.,
+  # \`--no-fail\` flag is intentional: a degraded health report (e.g.,
   # Core unreachable in dev) is not an install failure; we just want
   # to surface it.
   if [[ "$DEPLOY_MODE" == "remote" ]]; then
@@ -414,6 +455,10 @@ sync_binary_local() {
     sudo_local cp "$REPO_ROOT/config/den-host.example.json" "$CONFIG_PATH"
     sudo_local chmod 644 "$CONFIG_PATH"
   else
+    # Warn if the API key environment file is missing.
+    if [[ ! -f /etc/den-host.env ]]; then
+      echo "WARNING: /etc/den-host.env not found. Create it with DEN_HOST_CORE_API_KEY and DEN_HOST_CHANNELS_API_KEY."
+    fi
     echo "Config exists at $CONFIG_PATH; preserving. Example at $REPO_ROOT/config/den-host.example.json."
   fi
 
@@ -482,6 +527,45 @@ sync_binary() {
   fi
 }
 
+print_install_plan() {
+  echo ""
+  echo "=== Build complete ==="
+  echo "Publish directory: $PUBLISH_DIR"
+  echo ""
+  echo "The binary and support files are ready at:"
+  echo "  binary:     $PUBLISH_DIR/den-host"
+  echo "  unit file:  $PUBLISH_DIR/den-host.service"
+
+  if [[ -f "$PUBLISH_DIR/den-host.logrotate" ]]; then
+    echo "  logrotate:  $PUBLISH_DIR/den-host.logrotate"
+  fi
+  echo "  example config: $REPO_ROOT/config/den-host.example.json"
+  echo ""
+  echo "============================== FIRST-TIME SETUP =============================="
+  echo "If this is a first-time install, create /etc/den-host.env with:"
+  echo "  DEN_HOST_CORE_API_KEY=<your-api-key>"
+  echo "  DEN_HOST_CHANNELS_API_KEY=<your-api-key>"
+  echo ""
+  echo "To install on this machine, run:"
+  echo ""
+  echo "  scripts/deploy-den-host.sh --install-from $(shell_quote "$PUBLISH_DIR")"
+  echo ""
+  echo "Or if handing off to a sysadmin agent, pass the publish directory path above."
+  echo ""
+  echo "=== End of build-only output ==="
+}
+
+prepare_publish_artifacts() {
+  # Generate the systemd service unit alongside the publish output so the
+  # remote install script (or --install-from) can copy it.
+  generate_service_unit "$PUBLISH_DIR/den-host.service"
+
+  # Copy the logrotate template so it can be installed with substitutions.
+  if [[ -f "$REPO_ROOT/scripts/den-host.logrotate" ]]; then
+    cp "$REPO_ROOT/scripts/den-host.logrotate" "$PUBLISH_DIR/den-host.logrotate"
+  fi
+}
+
 main() {
   require_non_root
   parse_args "$@"
@@ -499,17 +583,29 @@ main() {
   initialize_build_artifacts_dir
   trap cleanup EXIT
 
-  # Generate the systemd service unit alongside the publish output so the
-  # remote install script can copy it.
-  generate_service_unit "$PUBLISH_DIR/den-host.service"
+  if [[ -z "$INSTALL_FROM" ]]; then
+    # Full build phase: compile and stage artifacts.
+    prepare_publish_artifacts
+    publish_binary
 
-  # Copy the logrotate template so the remote install script can
-  # install it with the right substitutions.
-  if [[ -f "$REPO_ROOT/scripts/den-host.logrotate" ]]; then
-    cp "$REPO_ROOT/scripts/den-host.logrotate" "$PUBLISH_DIR/den-host.logrotate"
+    if [[ "$BUILD_ONLY" -eq 1 ]]; then
+      # Suppress temp dir cleanup so the publish directory survives for
+      # the --install-from phase. The caller is responsible for cleaning
+      # it up after the install, or it will be reaped by /tmp cleanup.
+      TEMP_PUBLISH_DIR_CREATED=0
+      TEMP_BUILD_ARTIFACTS_DIR_CREATED=0
+      print_install_plan
+      exit 0
+    fi
+  else
+    # Install-from mode: using a pre-built publish directory.
+    if [[ ! -f "$PUBLISH_DIR/den-host" ]]; then
+      echo "Install-from directory missing den-host binary: $PUBLISH_DIR" >&2
+      exit 1
+    fi
+    echo "Using pre-built publish directory: $PUBLISH_DIR"
   fi
 
-  publish_binary
   sync_binary
   preflight_config
   smoke_binary

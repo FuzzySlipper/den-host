@@ -20,12 +20,16 @@ namespace DenHost.Clients;
 /// <param name="ManagedCapabilities">
 /// Generic capabilities this adapter claims to be able to satisfy.
 /// </param>
+/// <param name="ProjectId">
+/// Optional project id scope for the binding. Null means unscoped.
+/// </param>
 public sealed record AdapterBindingRequest(
     string AdapterKind,
     string AdapterInstanceId,
     string Host,
     IReadOnlyList<string> ManagedRoles,
-    IReadOnlyList<string> ManagedCapabilities);
+    IReadOnlyList<string> ManagedCapabilities,
+    string? ProjectId = null);
 
 /// <summary>
 /// Readback of a registered adapter binding from Core.

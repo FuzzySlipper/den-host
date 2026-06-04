@@ -14,6 +14,7 @@ public sealed record AdapterIdentity
     public required string Host { get; init; }
     public required IReadOnlyList<string> ManagedRoles { get; init; }
     public required IReadOnlyList<string> ManagedCapabilities { get; init; }
+    public string? ProjectId { get; init; }
 
     public static AdapterIdentity From(AdapterOptions options)
     {
@@ -25,6 +26,7 @@ public sealed record AdapterIdentity
             Host = options.Host,
             ManagedRoles = options.ManagedRoles,
             ManagedCapabilities = options.ManagedCapabilities,
+            ProjectId = options.ProjectId,
         };
     }
 }

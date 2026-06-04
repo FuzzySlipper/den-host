@@ -46,7 +46,8 @@ internal sealed class BindingHealthProvider : IBindingHealthProvider
             AdapterInstanceId: _identity.InstanceId,
             Host: _identity.Host,
             ManagedRoles: _identity.ManagedRoles,
-            ManagedCapabilities: _identity.ManagedCapabilities);
+            ManagedCapabilities: _identity.ManagedCapabilities,
+            ProjectId: _identity.ProjectId);
 
         try
         {

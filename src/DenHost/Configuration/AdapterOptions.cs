@@ -46,4 +46,10 @@ public sealed class AdapterOptions
     /// "worker.reviewer"), not harness-specific concepts.
     /// </summary>
     public IReadOnlyList<string> ManagedCapabilities { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Optional project id scope for the adapter binding. When set, the
+    /// binding is scoped to this project. Defaults to null (unscoped).
+    /// </summary>
+    public string? ProjectId { get; init; }
 }
