@@ -16,17 +16,10 @@ namespace DenHost.Clients;
 /// </summary>
 public sealed class CoreClient : ICoreClient
 {
-    private static readonly JsonSerializerOptions s_requestOptions = new()
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
-
-    /// <summary>
-    /// Options for deserializing Core responses. Core's global config uses
-    /// SnakeCaseLower, but the binding registration route explicitly returns
-    /// camelCase via <c>Results.Json(response, camelOptions)</c>.
-    /// </summary>
-    private static readonly JsonSerializerOptions s_responseOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
     private readonly CoreOptions _options;
@@ -70,7 +63,7 @@ public sealed class CoreClient : ICoreClient
         var path = $"{_options.BindingPath.TrimEnd('/')}/{Uri.EscapeDataString(request.AdapterInstanceId)}";
         using var message = new HttpRequestMessage(HttpMethod.Put, path)
         {
-            Content = JsonContent.Create(request, options: s_requestOptions),
+            Content = JsonContent.Create(request, options: s_jsonOptions),
         };
 
         if (!string.IsNullOrEmpty(_options.ApiKey))
@@ -90,7 +83,7 @@ public sealed class CoreClient : ICoreClient
         }
 
         var snapshot = await response.Content
-            .ReadFromJsonAsync<AdapterBindingSnapshot>(s_responseOptions, cancellationToken)
+            .ReadFromJsonAsync<AdapterBindingSnapshot>(s_jsonOptions, cancellationToken)
             .ConfigureAwait(false);
 
         if (snapshot is null)
@@ -139,7 +132,7 @@ public sealed class CoreClient : ICoreClient
         }
 
         return await response.Content
-            .ReadFromJsonAsync<AdapterBindingSnapshot>(s_responseOptions, cancellationToken)
+            .ReadFromJsonAsync<AdapterBindingSnapshot>(s_jsonOptions, cancellationToken)
             .ConfigureAwait(false);
     }
 
