@@ -69,7 +69,7 @@ public sealed class ChannelsOptions : EndpointOptions
     /// GET /api/direct-agent-events/{eventId}, which are reachable
     /// through the single-event readback method on IChannelsClient.
     /// </summary>
-    public string EventsListPath { get; init; } = "/api/gateway/events";
+    public string EventsListPath { get; init; } = "/api/direct-agent-events";
 
     /// <summary>
     /// Optional channel id to scope the list read. If null, the
