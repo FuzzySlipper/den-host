@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DenHost.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -18,7 +19,10 @@ namespace DenHost.Clients;
 /// </summary>
 public sealed class ChannelsClient : IChannelsClient
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private readonly HttpClient _http;
     private readonly ChannelsOptions _options;
@@ -168,6 +172,72 @@ public sealed class ChannelsClient : IChannelsClient
         return await response.Content
             .ReadFromJsonAsync<ChannelsEventReadback>(s_jsonOptions, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<AgentWorkLifecycleWriteResult> PostAgentWorkLifecycleEventAsync(
+        AgentWorkLifecycleWriteRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(_options.AgentWorkLifecyclePath))
+        {
+            return new AgentWorkLifecycleWriteResult(false, null, EndpointImplemented: false, null,
+                "Channels:AgentWorkLifecyclePath not configured");
+        }
+
+        using var message = new HttpRequestMessage(HttpMethod.Post, _options.AgentWorkLifecyclePath)
+        {
+            Content = JsonContent.Create(request, options: s_jsonOptions),
+        };
+        AddAuthIfPresent(message);
+
+        try
+        {
+            using var response = await _http
+                .SendAsync(message, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            var body = await SafeReadBodyAsync(response, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new AgentWorkLifecycleWriteResult(false, (int)response.StatusCode, EndpointImplemented: false, null, body);
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                return new AgentWorkLifecycleWriteResult(false, (int)response.StatusCode, EndpointImplemented: true, null, body);
+            }
+            var eventId = TryExtractId(body);
+            return new AgentWorkLifecycleWriteResult(true, (int)response.StatusCode, EndpointImplemented: true, eventId, null);
+        }
+        catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogDebug(ex, "Channels lifecycle write timed out");
+            return new AgentWorkLifecycleWriteResult(false, null, EndpointImplemented: true, null, "timeout");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogDebug(ex, "Channels lifecycle write failed");
+            return new AgentWorkLifecycleWriteResult(false, null, EndpointImplemented: true, null, ex.Message);
+        }
+    }
+
+    private static string? TryExtractId(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("id", out var id)) return id.ToString();
+        }
+        catch
+        {
+            // Best-effort evidence enrichment only.
+        }
+        return null;
     }
 
     private void AddAuthIfPresent(HttpRequestMessage message)

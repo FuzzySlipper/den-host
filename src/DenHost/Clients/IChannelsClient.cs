@@ -94,6 +94,56 @@ public sealed record ChannelsEventReadback(
     DateTimeOffset CreatedAt);
 
 /// <summary>
+/// Machine-write request to record a non-waking agent-work lifecycle event
+/// in Channels (POST /api/agent-work/lifecycle-events).
+/// </summary>
+public sealed class AgentWorkLifecycleWriteRequest
+{
+    public long ChannelId { get; init; }
+    public string AgentIdentity { get; init; } = string.Empty;
+    public string EventType { get; init; } = string.Empty;
+    public string? ProjectId { get; init; }
+    public long? TaskId { get; init; }
+    public long? ThreadId { get; init; }
+    public long? AnchorMessageId { get; init; }
+    public string? ProfileIdentity { get; init; }
+    public string? AgentInstanceId { get; init; }
+    public string? WorkerIdentity { get; init; }
+    public string? WorkerRole { get; init; }
+    public string? PoolMemberId { get; init; }
+    public string? AssignmentId { get; init; }
+    public string? WorkerRunId { get; init; }
+    public string? LeaseId { get; init; }
+    public string? SessionId { get; init; }
+    public string? ParentSessionId { get; init; }
+    public string? DeliveryRequestId { get; init; }
+    public string? SourceMessageId { get; init; }
+    public string? DirectAgentEventId { get; init; }
+    public string? HostId { get; init; }
+    public int? ProcessId { get; init; }
+    public string? Workdir { get; init; }
+    public string? Branch { get; init; }
+    public string? Commit { get; init; }
+    public long? ReviewRoundId { get; init; }
+    public string? DisplayBlockId { get; init; }
+    public string? ParentAgentIdentity { get; init; }
+    public string? LastActivityAt { get; init; }
+    public string? StalenessDeadline { get; init; }
+    public string? StateReason { get; init; }
+    public string? Title { get; init; }
+    public string? Summary { get; init; }
+    public string? MetadataJson { get; init; }
+    public string? DedupeKey { get; init; }
+}
+
+public sealed record AgentWorkLifecycleWriteResult(
+    bool Ok,
+    int? StatusCode,
+    bool EndpointImplemented,
+    string? EventId,
+    string? Diagnostic);
+
+/// <summary>
 /// HTTP client contract for the Channels endpoint.
 /// </summary>
 public interface IChannelsClient
@@ -127,5 +177,14 @@ public interface IChannelsClient
     /// </summary>
     Task<ChannelsEventReadback?> GetDirectAgentEventAsync(
         long eventId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes a non-waking agent-work lifecycle event to Channels.
+    /// Returns a structured result so telemetry failures do not decide
+    /// workflow truth or crash local runtime loops.
+    /// </summary>
+    Task<AgentWorkLifecycleWriteResult> PostAgentWorkLifecycleEventAsync(
+        AgentWorkLifecycleWriteRequest request,
         CancellationToken cancellationToken);
 }

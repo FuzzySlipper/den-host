@@ -112,6 +112,10 @@ public class HealthReporterTests
             Task.FromResult(new ChannelsEventPage(Array.Empty<ChannelsEvent>(), null, HasMore: false, EndpointImplemented: true));
         public Task<ChannelsEventReadback?> GetDirectAgentEventAsync(long eventId, CancellationToken cancellationToken) =>
             Task.FromResult<ChannelsEventReadback?>(null);
+
+        public Task<AgentWorkLifecycleWriteResult> PostAgentWorkLifecycleEventAsync(
+            AgentWorkLifecycleWriteRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult(new AgentWorkLifecycleWriteResult(true, 201, true, "1", null));
     }
 
     private sealed class FakeBindingProvider : DenHost.Host.IBindingHealthProvider

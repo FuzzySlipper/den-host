@@ -170,6 +170,7 @@ public static class DenHostServiceCollectionExtensions
             return new EventCursorStore(runtime, logger);
         });
         services.AddSingleton<IChannelsEventReader, ChannelsEventReader>();
+        services.AddSingleton<IAgentWorkLifecycleEmitter, AgentWorkLifecycleEmitter>();
 
         // --- Local worker run registry + reconciliation -------------------
         services.AddSingleton<RunRegistry>();

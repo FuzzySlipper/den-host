@@ -90,4 +90,10 @@ public sealed class ChannelsOptions : EndpointOptions
     /// path's "I have an event id, fetch its details" flow.
     /// </summary>
     public string DirectAgentEventPath { get; init; } = "/api/direct-agent-events";
+
+    /// <summary>
+    /// Path for the machine-written, non-waking agent-work lifecycle event
+    /// producer contract (POST /api/agent-work/lifecycle-events).
+    /// </summary>
+    public string AgentWorkLifecyclePath { get; init; } = "/api/agent-work/lifecycle-events";
 }

@@ -61,7 +61,7 @@ public class EventsCommandTests
             };
             var channels = new FakeChannelsClient();
             var reader = new DenHost.Channels.ChannelsEventReader(
-                channels, store, identity, Microsoft.Extensions.Logging.Abstractions.NullLogger<DenHost.Channels.ChannelsEventReader>.Instance);
+                channels, store, identity, new RecordingLifecycleEmitter(), Microsoft.Extensions.Logging.Abstractions.NullLogger<DenHost.Channels.ChannelsEventReader>.Instance);
             var cmd = BuildCommand(reader, store, channels, channelId: 42, projectId: null);
             var context = new CliContext(new BufferingCliHost(), new[] { "tail" });
 
@@ -247,6 +247,12 @@ public class EventsCommandTests
         DeliveryStatus: "recorded", ClaimStatus: "unclaimed", CompletionStatus: "pending",
         CreatedAt: DateTimeOffset.UtcNow);
 
+    private sealed class RecordingLifecycleEmitter : IAgentWorkLifecycleEmitter
+    {
+        public Task EmitDirectAgentRuntimeReceivedAsync(ChannelsEvent evt, EventMatchOutcome outcome, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task EmitRunLifecycleAsync(DenHost.Worker.LocalRunRecord record, string eventType, string stateReason, CancellationToken cancellationToken, string? summary = null, string? dedupeSuffix = null) => Task.CompletedTask;
+    }
+
     private sealed class FakeReader : IChannelsEventReader
     {
         private readonly ChannelsEventReadResult _result;
@@ -278,5 +284,9 @@ public class EventsCommandTests
             LastGetEventIdArg = eventId;
             return Task.FromResult(_readback);
         }
+
+        public Task<AgentWorkLifecycleWriteResult> PostAgentWorkLifecycleEventAsync(
+            AgentWorkLifecycleWriteRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult(new AgentWorkLifecycleWriteResult(true, 201, true, "1", null));
     }
 }

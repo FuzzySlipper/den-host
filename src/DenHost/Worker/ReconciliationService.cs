@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using DenHost.Channels;
 using DenHost.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -27,16 +28,19 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
 
     private readonly RunRegistry _registry;
     private readonly RuntimeOptions _runtime;
+    private readonly IAgentWorkLifecycleEmitter _lifecycle;
     private readonly ILogger<ReconciliationService> _logger;
 
     public ReconciliationService(
         RunRegistry registry,
         RuntimeOptions runtime,
-        ILogger<ReconciliationService> logger)
+        ILogger<ReconciliationService> logger,
+        IAgentWorkLifecycleEmitter? lifecycle = null)
     {
         _registry = registry;
         _runtime = runtime;
         _logger = logger;
+        _lifecycle = lifecycle ?? NullAgentWorkLifecycleEmitter.Instance;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -109,6 +113,9 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
             TryKillProcess(record.ProcessId!.Value);
             TryDelete(markerPath);
             var note = "Process was alive locally but assignment is terminal; process terminated.";
+            await _lifecycle.EmitRunLifecycleAsync(record, "cleanup_started", note, cancellationToken, dedupeSuffix: "terminal_process_kill").ConfigureAwait(false);
+            await _lifecycle.EmitRunLifecycleAsync(record with { ProcessId = null, State = LocalRunState.Stopped }, "cleanup_completed", note, cancellationToken, dedupeSuffix: "terminal_process_kill").ConfigureAwait(false);
+            await _lifecycle.EmitRunLifecycleAsync(record with { ProcessId = null, State = LocalRunState.Stopped }, "capacity_released", note, cancellationToken, dedupeSuffix: "terminal_process_kill").ConfigureAwait(false);
             return new ReconciliationReport(record.LocalRunId, record.AssignmentId, ReconciliationOutcome.RunOnTerminalAssignment, processObserved, assignmentStateObserved, note, null);
         }
 
@@ -117,7 +124,9 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
         if (processAlive && assignmentStateObserved == "active")
         {
             if (markerPresent) TryDelete(markerPath);
-            return new ReconciliationReport(record.LocalRunId, record.AssignmentId, ReconciliationOutcome.ReAdopted, processObserved, assignmentStateObserved, "Live process + active assignment; re-adopted.", null);
+            var note = "Live process + active assignment; re-adopted.";
+            await _lifecycle.EmitRunLifecycleAsync(record, "heartbeat", note, cancellationToken, dedupeSuffix: "re_adopted").ConfigureAwait(false);
+            return new ReconciliationReport(record.LocalRunId, record.AssignmentId, ReconciliationOutcome.ReAdopted, processObserved, assignmentStateObserved, note, null);
         }
 
         // Branch 2: missing process + running assignment (and no unclean marker).
@@ -127,6 +136,7 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
             var evidence = await WriteEvidenceAsync(record, ReconciliationOutcome.StaleAssignmentActive, processObserved, assignmentStateObserved, note, cancellationToken).ConfigureAwait(false);
             var stale = record with { State = LocalRunState.Mismatch, ProcessId = null };
             await _registry.UpdateStateAsync(stale, cancellationToken).ConfigureAwait(false);
+            await _lifecycle.EmitRunLifecycleAsync(stale, "failed", note, cancellationToken, summary: evidence, dedupeSuffix: "stale_assignment_active").ConfigureAwait(false);
             return new ReconciliationReport(record.LocalRunId, record.AssignmentId, ReconciliationOutcome.StaleAssignmentActive, processObserved, assignmentStateObserved, note, evidence);
         }
 
@@ -138,6 +148,7 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
             var evidence = await WriteEvidenceAsync(record, ReconciliationOutcome.UncleanShutdownQuarantined, processObserved, assignmentStateObserved, note, cancellationToken).ConfigureAwait(false);
             var quarantined = record with { State = LocalRunState.Quarantined, ProcessId = null };
             await _registry.UpdateStateAsync(quarantined, cancellationToken).ConfigureAwait(false);
+            await _lifecycle.EmitRunLifecycleAsync(quarantined, "failed", note, cancellationToken, summary: evidence, dedupeSuffix: "unclean_shutdown").ConfigureAwait(false);
             return new ReconciliationReport(record.LocalRunId, record.AssignmentId, ReconciliationOutcome.UncleanShutdownQuarantined, processObserved, assignmentStateObserved, note, evidence);
         }
 
@@ -208,6 +219,24 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
+    }
+
+    private sealed class NullAgentWorkLifecycleEmitter : IAgentWorkLifecycleEmitter
+    {
+        public static readonly NullAgentWorkLifecycleEmitter Instance = new();
+
+        public Task EmitDirectAgentRuntimeReceivedAsync(
+            DenHost.Clients.ChannelsEvent evt,
+            DenHost.Channels.EventMatchOutcome outcome,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task EmitRunLifecycleAsync(
+            LocalRunRecord record,
+            string eventType,
+            string stateReason,
+            CancellationToken cancellationToken,
+            string? summary = null,
+            string? dedupeSuffix = null) => Task.CompletedTask;
     }
 
     private async Task<string> WriteEvidenceAsync(

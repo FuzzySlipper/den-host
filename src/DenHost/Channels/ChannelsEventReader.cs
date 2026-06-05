@@ -48,17 +48,20 @@ internal sealed class ChannelsEventReader : IChannelsEventReader
     private readonly IChannelsClient _channels;
     private readonly EventCursorStore _cursorStore;
     private readonly AdapterIdentity _identity;
+    private readonly IAgentWorkLifecycleEmitter _lifecycle;
     private readonly ILogger<ChannelsEventReader> _logger;
 
     public ChannelsEventReader(
         IChannelsClient channels,
         EventCursorStore cursorStore,
         AdapterIdentity identity,
+        IAgentWorkLifecycleEmitter lifecycle,
         ILogger<ChannelsEventReader> logger)
     {
         _channels = channels;
         _cursorStore = cursorStore;
         _identity = identity;
+        _lifecycle = lifecycle;
         _logger = logger;
     }
 
@@ -97,7 +100,9 @@ internal sealed class ChannelsEventReader : IChannelsEventReader
             {
                 continue;
             }
-            outcomes.Add(EventMatcher.Match(evt, _identity));
+            var outcome = EventMatcher.Match(evt, _identity);
+            outcomes.Add(outcome);
+            await _lifecycle.EmitDirectAgentRuntimeReceivedAsync(evt, outcome, cancellationToken).ConfigureAwait(false);
         }
 
         // Advance the cursor on a successful read, even if the page is

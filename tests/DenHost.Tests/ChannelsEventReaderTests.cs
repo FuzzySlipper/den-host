@@ -51,7 +51,7 @@ public class ChannelsEventReaderTests : IDisposable
             ManagedCapabilities = Array.Empty<string>(),
         };
         var reader = new ChannelsEventReader(
-            channels, store, identity, NullLogger<ChannelsEventReader>.Instance);
+            channels, store, identity, new RecordingLifecycleEmitter(), NullLogger<ChannelsEventReader>.Instance);
         return (reader, channels, store);
     }
 
@@ -233,13 +233,32 @@ public class ChannelsEventReaderTests : IDisposable
                 ManagedRoles = new[] { "coder" },
                 ManagedCapabilities = Array.Empty<string>(),
             };
-            reader = new ChannelsEventReader(channels, store, identity, NullLogger<ChannelsEventReader>.Instance);
+            reader = new ChannelsEventReader(channels, store, identity, new RecordingLifecycleEmitter(), NullLogger<ChannelsEventReader>.Instance);
         }
         catch
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
             throw;
         }
+    }
+
+    private sealed class RecordingLifecycleEmitter : IAgentWorkLifecycleEmitter
+    {
+        public readonly List<AgentWorkLifecycleWriteRequest> Requests = new();
+
+        public Task EmitDirectAgentRuntimeReceivedAsync(ChannelsEvent evt, EventMatchOutcome outcome, CancellationToken cancellationToken)
+        {
+            Requests.Add(new AgentWorkLifecycleWriteRequest
+            {
+                ChannelId = evt.ChannelId,
+                AgentIdentity = evt.PoolMemberId ?? "unknown",
+                EventType = "runtime_received",
+                DirectAgentEventId = evt.EventId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task EmitRunLifecycleAsync(DenHost.Worker.LocalRunRecord record, string eventType, string stateReason, CancellationToken cancellationToken, string? summary = null, string? dedupeSuffix = null) => Task.CompletedTask;
     }
 
     private sealed class FakeChannelsClient : IChannelsClient
@@ -279,5 +298,9 @@ public class ChannelsEventReaderTests : IDisposable
             LastGetEventIdArg = eventId;
             return Task.FromResult(NextReadback);
         }
+
+        public Task<AgentWorkLifecycleWriteResult> PostAgentWorkLifecycleEventAsync(
+            AgentWorkLifecycleWriteRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult(new AgentWorkLifecycleWriteResult(true, 201, true, "1", null));
     }
 }
