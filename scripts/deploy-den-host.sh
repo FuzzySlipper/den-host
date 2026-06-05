@@ -18,6 +18,7 @@ SKIP_RESTART=0
 SKIP_SMOKE=0
 DRY_RUN=0
 BUILD_ONLY=0
+WITH_FLEETOPS=0
 INSTALL_FROM=""
 TEMP_PUBLISH_DIR_CREATED=0
 TEMP_BUILD_ARTIFACTS_DIR_CREATED=0
@@ -54,6 +55,8 @@ Options:
   --local                 Force local deployment mode
   --remote                Force remote SSH deployment mode
   --build-only            Build and publish only; skip install. Prints install plan.
+  --with-fleetops         Also install and enable the FleetOps HTTP API service
+                          (den-host-fleetops.service) alongside the background service.
   --install-from <dir>    Skip build; install from a pre-built publish directory.
   --skip-restart          Install binary but do not restart/enable systemd service
   --skip-smoke            Do not run den-host smoke checks after deploy
@@ -73,6 +76,7 @@ parse_args() {
       --local)        DEPLOY_MODE=local ;;
       --remote)       DEPLOY_MODE=remote ;;
       --build-only)   BUILD_ONLY=1 ;;
+      --with-fleetops) WITH_FLEETOPS=1 ;;
       --install-from) INSTALL_FROM="$2"; shift ;;
       --skip-restart) SKIP_RESTART=1 ;;
       --skip-smoke)   SKIP_SMOKE=1 ;;
@@ -118,6 +122,7 @@ Resolved deploy configuration:
   INSTALL_FROM=${INSTALL_FROM:-<none>}
   SKIP_RESTART=$SKIP_RESTART
   SKIP_SMOKE=$SKIP_SMOKE
+  WITH_FLEETOPS=$WITH_FLEETOPS
 EOF_CONFIG
 }
 
@@ -302,10 +307,30 @@ sudo -n cp "$publish_stage/den-host.service" "$local_service_dir/$SERVICE_NAME"
 sudo -n chmod 644 "$local_service_dir/$SERVICE_NAME"
 sudo -n systemctl daemon-reload
 
+# Optionally install the FleetOps HTTP API service unit.
+: "${WITH_FLEETOPS:=0}"
+if [[ "$WITH_FLEETOPS" -eq 1 ]]; then
+  echo "Installing FleetOps service unit ..."
+  sudo -n cp "$publish_stage/den-host-fleetops.service" "$local_service_dir/den-host-fleetops.service"
+  sudo -n chmod 644 "$local_service_dir/den-host-fleetops.service"
+  sudo -n systemctl daemon-reload
+fi
+
 if [[ "$SKIP_RESTART" -eq 1 ]]; then
   echo "Installed den-host binary + service unit; skipping restart."
+  if [[ "$WITH_FLEETOPS" -eq 1 ]]; then
+    echo "FleetOps service unit installed but not restarted (--skip-restart)."
+  fi
   sudo -n rm -rf "$REMOTE_STAGE_DIR"
   exit 0
+fi
+
+# Optionally enable and restart FleetOps service.
+if [[ "$WITH_FLEETOPS" -eq 1 ]]; then
+  echo "Enabling and restarting den-host-fleetops.service ..."
+  sudo -n systemctl enable den-host-fleetops.service 2>/dev/null || true
+  sudo -n systemctl restart den-host-fleetops.service || \
+    echo "FleetOps service restart failed; check status manually." >&2
 fi
 
 echo "Enabling and restarting $SERVICE_NAME ..."
@@ -552,6 +577,25 @@ sync_binary_local() {
   rm -f "$tmp_unit"
   sudo_local systemctl daemon-reload
 
+  # Optionally install the FleetOps HTTP API service unit.
+  if [[ "$WITH_FLEETOPS" -eq 1 ]]; then
+    local fleetops_tmp_unit
+    fleetops_tmp_unit="$(mktemp /tmp/den-host-fleetops.service.XXXXXX)"
+    generate_fleetops_service_unit "$fleetops_tmp_unit"
+    sudo_local cp "$fleetops_tmp_unit" "/etc/systemd/system/den-host-fleetops.service"
+    sudo_local chmod 644 "/etc/systemd/system/den-host-fleetops.service"
+    rm -f "$fleetops_tmp_unit"
+    sudo_local systemctl daemon-reload
+    echo "FleetOps service unit: /etc/systemd/system/den-host-fleetops.service"
+
+    if [[ "$SKIP_RESTART" -eq 0 ]]; then
+      echo "Enabling and restarting den-host-fleetops.service ..."
+      sudo_local systemctl enable den-host-fleetops.service 2>/dev/null || true
+      sudo_local systemctl restart den-host-fleetops.service || \
+        echo "FleetOps service restart failed; binary installed but service not running." >&2
+    fi
+  fi
+
   echo "Binary installed at $BINARY_DIR/den-host"
   echo "Runtime dirs under $RUNTIME_DIR"
   echo "Service unit: /etc/systemd/system/$SERVICE_NAME"
@@ -578,6 +622,7 @@ sync_binary_remote() {
   remote_env+=" RUNTIME_DIR=$(shell_quote "$RUNTIME_DIR")"
   remote_env+=" SKIP_RESTART=$(shell_quote "$SKIP_RESTART")"
   remote_env+=" REMOTE_STAGE_DIR=$(shell_quote "$REMOTE_STAGE_DIR")"
+  remote_env+=" WITH_FLEETOPS=$(shell_quote "$WITH_FLEETOPS")"
 
   # shellcheck disable=SC2029
   remote_install_script | ssh "$SSH_TARGET" "cat > $(shell_quote "$remote_install_path") && chmod 700 $(shell_quote "$remote_install_path")"
@@ -616,6 +661,9 @@ print_install_plan() {
   echo "To install on this machine, run:"
   echo ""
   echo "  scripts/deploy-den-host.sh --install-from $(shell_quote "$PUBLISH_DIR")"
+  echo ""
+  echo "To install with FleetOps HTTP API, add --with-fleetops:"
+  echo "  scripts/deploy-den-host.sh --install-from $(shell_quote "$PUBLISH_DIR") --with-fleetops"
   echo ""
   echo "Or if handing off to a sysadmin agent, pass the publish directory path above."
   echo ""

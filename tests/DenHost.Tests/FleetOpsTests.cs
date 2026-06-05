@@ -405,6 +405,68 @@ public class FleetOpsTests
         Assert.Contains("ExecStart=${BINARY_DIR}/den-host run", content);
     }
 
+    [Fact]
+    public void FleetOpsActionRegistry_MutatingActionsRequireConfirmation()
+    {
+        var registry = new FleetOpsActionRegistry();
+
+        // All mutating (non-disabled) actions should require confirmation
+        foreach (var action in registry.GetAll())
+        {
+            if (action.Mutating && string.IsNullOrEmpty(action.DisabledReason))
+            {
+                Assert.True(action.NeedsConfirmation,
+                    $"Mutating action '{action.Id}' must have NeedsConfirmation=true");
+                Assert.False(string.IsNullOrEmpty(action.ConfirmationCopy),
+                    $"Mutating action '{action.Id}' must have a ConfirmationCopy");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task FleetOpsService_RestartFailedRequiresConfirmation()
+    {
+        var service = CreateService();
+
+        var result = await service.ExecuteActionAsync("restart-failed",
+            new FleetOpsActionRunRequest("restart-failed"));
+
+        Assert.Equal("failed", result.Status);
+        Assert.Contains("Confirmation is required", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task FleetOpsService_RestartProfileRequiresConfirmation()
+    {
+        var service = CreateService();
+
+        var result = await service.ExecuteActionAsync("restart-profile",
+            new FleetOpsActionRunRequest("restart-profile")
+            {
+                Args = new Dictionary<string, string> { ["profile"] = "test-profile" }
+            });
+
+        Assert.Equal("failed", result.Status);
+        Assert.Contains("Confirmation is required", result.ErrorMessage);
+    }
+
+    [Fact]
+    public void DeployScript_HasWithFleetopsFlag()
+    {
+        var deployScriptPath = "/home/dev/den-host/scripts/deploy-den-host.sh";
+        Assert.True(File.Exists(deployScriptPath));
+
+        var content = File.ReadAllText(deployScriptPath);
+
+        // Verify --with-fleetops flag is parsed
+        Assert.Contains("--with-fleetops", content);
+        Assert.Contains("WITH_FLEETOPS", content);
+
+        // Verify fleetops unit is installed when flag is set (local path)
+        Assert.Contains("den-host-fleetops.service", content);
+        Assert.Contains("systemctl enable den-host-fleetops.service", content);
+    }
+
     // ======================================================================
     // Helpers
     // ======================================================================
