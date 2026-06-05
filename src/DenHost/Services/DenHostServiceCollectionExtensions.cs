@@ -3,6 +3,7 @@ using DenHost.Cli;
 using DenHost.Cli.Hosting;
 using DenHost.Clients;
 using DenHost.Configuration;
+using DenHost.FleetOps;
 using DenHost.Harness;
 using DenHost.Harness.Modules.Hermes;
 using DenHost.Health;
@@ -77,6 +78,9 @@ public static class DenHostServiceCollectionExtensions
             .Bind(configuration.GetSection(HarnessOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+
+        // --- FleetOps (machine-local HTTP API surface) ----------------------
+        services.AddDenHostFleetOps(configuration);
 
         // --- Adapter identity (singleton, derived from options) -------------
         services.AddSingleton(sp =>
@@ -194,6 +198,7 @@ public static class DenHostServiceCollectionExtensions
         services.AddSingleton<SmokeCommand>();
         services.AddSingleton<ReconcileCommand>();
         services.AddSingleton<QuarantineCommand>();
+        services.AddSingleton<ServeCommand>();
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<HealthCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<RunCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<BindingCommand>());
@@ -201,6 +206,7 @@ public static class DenHostServiceCollectionExtensions
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<SmokeCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<ReconcileCommand>());
         services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<QuarantineCommand>());
+        services.AddSingleton<ICliCommand>(sp => sp.GetRequiredService<ServeCommand>());
         services.AddSingleton<CliDispatcher>();
 
         return services;
