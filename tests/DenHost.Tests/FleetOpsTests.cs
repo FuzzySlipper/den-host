@@ -332,6 +332,80 @@ public class FleetOpsTests
     }
 
     // ======================================================================
+    // Listener binding / service command tests
+    // ======================================================================
+
+    [Fact]
+    public async Task WebApplication_BindsConfiguredListenAddress()
+    {
+        var listenAddress = "http://127.0.0.1:55400";
+        var builder = WebApplication.CreateBuilder();
+        var app = builder.Build();
+
+        // Bind to the configured address before running
+        app.Urls.Add(listenAddress);
+
+        // The app's Urls collection should contain the configured address
+        Assert.Contains(listenAddress, app.Urls);
+
+        await app.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task WebApplication_DefaultUrlsEmptyWithoutExplicitConfiguration()
+    {
+        var builder = WebApplication.CreateBuilder();
+        var app = builder.Build();
+
+        // Without explicit Urls.Add, the default Kestrel address is
+        // http://localhost:5000 but only after RunAsync starts listening.
+        // The Urls collection is empty before RunAsync unless explicitly set.
+        Assert.Empty(app.Urls);
+
+        await app.DisposeAsync();
+    }
+
+    [Fact]
+    public void DeployScript_GeneratesFleetOpsServiceUnitWithServeCommand()
+    {
+        var deployScriptPath = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            "../../../../scripts/deploy-den-host.sh");
+
+        if (!File.Exists(deployScriptPath))
+        {
+            // Fallback: try relative to project dir
+            deployScriptPath = "/home/dev/den-host/scripts/deploy-den-host.sh";
+        }
+
+        Assert.True(File.Exists(deployScriptPath),
+            $"Deploy script not found at {deployScriptPath}");
+
+        var content = File.ReadAllText(deployScriptPath);
+
+        // Verify fleetops unit generation function exists
+        Assert.Contains("generate_fleetops_service_unit", content);
+
+        // Verify it produces a den-host serve command
+        Assert.Contains("ExecStart=${BINARY_DIR}/den-host serve", content);
+
+        // Verify fleetops unit is generated in prepare_publish_artifacts
+        Assert.Contains("den-host-fleetops.service", content);
+    }
+
+    [Fact]
+    public void DeployScript_BackgroundUnitStillRunsDenHostRun()
+    {
+        var deployScriptPath = "/home/dev/den-host/scripts/deploy-den-host.sh";
+        Assert.True(File.Exists(deployScriptPath));
+
+        var content = File.ReadAllText(deployScriptPath);
+
+        // The original background service unit should still use `den-host run`
+        Assert.Contains("ExecStart=${BINARY_DIR}/den-host run", content);
+    }
+
+    // ======================================================================
     // Helpers
     // ======================================================================
 

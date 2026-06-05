@@ -71,6 +71,9 @@ public sealed class ServeCommand : ICliCommand
 
         var app = builder.Build();
 
+        // Bind Kestrel to the configured FleetOps ListenAddress.
+        app.Urls.Add(listenAddress);
+
         app.MapFleetOpsRoutes();
 
         try

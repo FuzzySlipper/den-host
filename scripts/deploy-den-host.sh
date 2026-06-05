@@ -328,8 +328,12 @@ generate_service_unit() {
   cat > "$unit_path" <<EOF_SERVICE
 # den-host systemd service unit.
 # Den Host is the harness-agnostic machine-local Den agent/runtime host.
-# It is not an HTTP server -- it runs background services (binding
-# heartbeat, Channels shadow reader, reconciliation) as a Generic Host.
+# This unit runs background services (binding heartbeat, Channels shadow
+# reader, reconciliation) as a Generic Host via \`den-host run\`.
+#
+# For the FleetOps HTTP API surface, deploy den-host-fleetops.service
+# instead (or in addition), which runs \`den-host serve\` to expose the
+# FleetOps REST API via Kestrel.
 #
 # To deploy: run scripts/deploy-den-host.sh or copy this unit to
 # /etc/systemd/system/den-host.service and adapt paths as needed.
@@ -393,6 +397,68 @@ NoNewPrivileges=yes
 [Install]
 WantedBy=multi-user.target
 EOF_SERVICE
+}
+
+generate_fleetops_service_unit() {
+  local unit_path="$1"
+  cat > "$unit_path" <<EOF_FLEETOPS
+# den-host FleetOps HTTP API systemd service unit.
+# Den Host FleetOps exposes a bounded machine-local Hermes fleet
+# management REST API via Kestrel. This unit runs \`den-host serve\`,
+# which binds to the FleetOps:ListenAddress configured in den-host.json.
+#
+# This unit is independent of den-host.service (Generic Host background
+# services) and can be enabled alongside it or in place of it, depending
+# on deployment needs.
+#
+# To deploy: run scripts/deploy-den-host.sh or copy this unit to
+# /etc/systemd/system/den-host-fleetops.service and adapt paths as needed.
+#
+# After install:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable den-host-fleetops.service
+#   sudo systemctl start den-host-fleetops.service
+#   sudo systemctl status den-host-fleetops.service
+#
+# Health check: curl http://<listen-address>/api/host/health
+# Overview:     curl http://<listen-address>/api/host/fleet-ops
+# View logs:    journalctl -fu den-host-fleetops.service
+
+[Unit]
+Description=Den Host FleetOps – Hermes fleet management HTTP API
+Documentation=https://github.com/FuzzySlipper/den-host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${BINARY_DIR}/den-host serve
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+
+Environment="DEN_HOST_CONFIG=${CONFIG_PATH}"
+
+# Secrets should be set via environment or EnvironmentFile:
+# Environment="DEN_HOST_CORE_API_KEY=..."
+# Environment="DEN_HOST_CHANNELS_API_KEY=..."
+# Do NOT embed secrets in the unit file.
+
+EnvironmentFile=/etc/den-host.env
+
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
+
+WorkingDirectory=${RUNTIME_DIR}
+
+# Hardening
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF_FLEETOPS
 }
 
 preflight_config() {
@@ -535,6 +601,7 @@ print_install_plan() {
   echo "The binary and support files are ready at:"
   echo "  binary:     $PUBLISH_DIR/den-host"
   echo "  unit file:  $PUBLISH_DIR/den-host.service"
+  echo "  fleetops:   $PUBLISH_DIR/den-host-fleetops.service"
 
   if [[ -f "$PUBLISH_DIR/den-host.logrotate" ]]; then
     echo "  logrotate:  $PUBLISH_DIR/den-host.logrotate"
@@ -556,9 +623,10 @@ print_install_plan() {
 }
 
 prepare_publish_artifacts() {
-  # Generate the systemd service unit alongside the publish output so the
-  # remote install script (or --install-from) can copy it.
+  # Generate the systemd service units alongside the publish output so the
+  # remote install script (or --install-from) can copy them.
   generate_service_unit "$PUBLISH_DIR/den-host.service"
+  generate_fleetops_service_unit "$PUBLISH_DIR/den-host-fleetops.service"
 
   # Copy the logrotate template so it can be installed with substitutions.
   if [[ -f "$REPO_ROOT/scripts/den-host.logrotate" ]]; then

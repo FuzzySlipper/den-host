@@ -56,12 +56,17 @@ public sealed class SystemdFleetOpsDiscovery : IFleetOpsServiceUnitDiscovery
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = _options.SystemctlPath,
-                Arguments = $"{mode} list-units 'hermes-gateway@*' --no-legend --no-pager",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+
+            psi.ArgumentList.Add(mode);
+            psi.ArgumentList.Add("list-units");
+            psi.ArgumentList.Add("hermes-gateway@*");
+            psi.ArgumentList.Add("--no-legend");
+            psi.ArgumentList.Add("--no-pager");
 
             using var process = System.Diagnostics.Process.Start(psi);
             if (process is null)
