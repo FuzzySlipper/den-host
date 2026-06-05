@@ -211,7 +211,7 @@ public class EventsCommandTests
         {
             BaseUrl = "http://127.0.0.1:18082",
             HealthPath = "/healthz",
-            EventsListPath = "/api/gateway/events",
+            EventsListPath = "/api/direct-agent-events",
             EventsListChannelId = channelId,
             EventsListProjectId = projectId,
             DirectAgentEventPath = "/api/direct-agent-events",

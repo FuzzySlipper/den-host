@@ -40,7 +40,8 @@ keys, plugin quirks, or any other harness-internal concept.
 - `den-host` does not leak Hermes/Pi/Codex/OpenCode/Claude Code internals
   into Core or Channels.
 - `den-host` does not require ordinary agents to know LAN IP/port topology.
-- `den-host` does not move Gateway broker semantics wholesale into the host.
+- `den-host` does not replicate Gateway semantics; those were decommissioned
+  and Channels owns the direct-agent/event/routing surface.
 
 ## Build
 
@@ -186,7 +187,7 @@ It ships:
   `den-host events get <eventId>`, `den-host run` background service)
   that never mutates Core/Channels and never launches a worker; logs
   migration-diff notes for cutover comparison. The list reader targets
-  the transitional /api/gateway/events route; the single-event readback
+  the Channels-owned /api/direct-agent-events endpoint; the single-event readback
   targets the primary GET /api/direct-agent-events/{eventId} contract
   (den-channels #1902).
 - Local worker run registry with per-run directories, PID files, log

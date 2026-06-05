@@ -64,10 +64,11 @@ public sealed class ChannelsOptions : EndpointOptions
 
     /// <summary>
     /// Path for the list-endpoint the shadow reader polls. Defaults to
-    /// the transitional /api/gateway/events list route; the primary
+    /// the Channels-owned /api/direct-agent-events list route; the primary
     /// contract surface is POST /api/direct-agent-events plus
     /// GET /api/direct-agent-events/{eventId}, which are reachable
     /// through the single-event readback method on IChannelsClient.
+    /// Gateway is decommissioned; this path is Channels-owned.
     /// </summary>
     public string EventsListPath { get; init; } = "/api/direct-agent-events";
 

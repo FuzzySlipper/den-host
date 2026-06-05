@@ -184,7 +184,12 @@ public sealed class RunRegistry
     private sealed class LocalRunRecordDto
     {
         public string LocalRunId { get; set; } = "";
+        public string? WorkerRunId { get; set; }
         public int? AssignmentId { get; set; }
+        public int? TaskId { get; set; }
+        public string? Role { get; set; }
+        public string? ProfileIdentity { get; set; }
+        public string? PoolMemberId { get; set; }
         public string HarnessKind { get; set; } = "Stub";
         public string HarnessModuleName { get; set; } = "";
         public int? ProcessId { get; set; }
@@ -195,7 +200,12 @@ public sealed class RunRegistry
         public static LocalRunRecordDto From(LocalRunRecord r) => new()
         {
             LocalRunId = r.LocalRunId,
+            WorkerRunId = r.WorkerRunId,
             AssignmentId = r.AssignmentId,
+            TaskId = r.TaskId,
+            Role = r.Role,
+            ProfileIdentity = r.ProfileIdentity,
+            PoolMemberId = r.PoolMemberId,
             HarnessKind = r.HarnessKind.ToString(),
             HarnessModuleName = r.HarnessModuleName,
             ProcessId = r.ProcessId,
@@ -206,7 +216,12 @@ public sealed class RunRegistry
 
         public LocalRunRecord ToRecord(string runDir) => new(
             LocalRunId: LocalRunId,
+            WorkerRunId: WorkerRunId,
             AssignmentId: AssignmentId,
+            TaskId: TaskId,
+            Role: Role,
+            ProfileIdentity: ProfileIdentity,
+            PoolMemberId: PoolMemberId,
             HarnessKind: Enum.TryParse<HarnessModuleKind>(HarnessKind, out var hk) ? hk : HarnessModuleKind.Stub,
             HarnessModuleName: HarnessModuleName,
             ProcessId: ProcessId,

@@ -31,7 +31,12 @@ public enum LocalRunState
 /// <c>RuntimeOptions.RunDir/&lt;assignment&gt;/&lt;local-run&gt;</c>).
 /// </summary>
 /// <param name="LocalRunId">Local run id (matches WorkerHandle.LocalRunId).</param>
+/// <param name="WorkerRunId">Core worker run id (e.g. "piw_..."), if known at registration.</param>
 /// <param name="AssignmentId">Core assignment id, if known at registration time.</param>
+/// <param name="TaskId">Den task id, if known at registration.</param>
+/// <param name="Role">Generic worker role (e.g. "coder", "reviewer"), if known.</param>
+/// <param name="ProfileIdentity">Pool profile identity (e.g. "spawned-coder"), if known.</param>
+/// <param name="PoolMemberId">Pool member id, if known.</param>
 /// <param name="HarnessKind">Kind of harness module that owns the run.</param>
 /// <param name="HarnessModuleName">Name of the harness module that owns the run.</param>
 /// <param name="ProcessId">OS process id, if the run has a live process.</param>
@@ -41,7 +46,12 @@ public enum LocalRunState
 /// <param name="RunDir">Path to the run's directory.</param>
 public sealed record LocalRunRecord(
     string LocalRunId,
+    string? WorkerRunId,
     int? AssignmentId,
+    int? TaskId,
+    string? Role,
+    string? ProfileIdentity,
+    string? PoolMemberId,
     HarnessModuleKind HarnessKind,
     string HarnessModuleName,
     int? ProcessId,

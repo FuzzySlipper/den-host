@@ -61,7 +61,7 @@ public class ConfigurationTests
           "Channels": {
             "BaseUrl": "http://127.0.0.1:18082",
             "HealthPath": "/healthz",
-            "EventsListPath": "/api/v2/gateway/events",
+            "EventsListPath": "/api/direct-agent-events",
             "EventsListChannelId": 42,
             "DirectAgentEventPath": "/api/v2/direct-agent-events",
             "TimeoutMs": 2500
@@ -72,7 +72,7 @@ public class ConfigurationTests
         var options = provider.GetRequiredService<IOptions<ChannelsOptions>>().Value;
 
         Assert.Equal("http://127.0.0.1:18082", options.BaseUrl);
-        Assert.Equal("/api/v2/gateway/events", options.EventsListPath);
+        Assert.Equal("/api/direct-agent-events", options.EventsListPath);
         Assert.Equal(42, options.EventsListChannelId);
         Assert.Equal("/api/v2/direct-agent-events", options.DirectAgentEventPath);
         Assert.Equal(2500, options.TimeoutMs);

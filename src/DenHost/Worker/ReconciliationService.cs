@@ -224,7 +224,12 @@ public sealed class ReconciliationService : BackgroundService, IReconciliationSe
         var dto = new
         {
             localRunId = record.LocalRunId,
+            workerRunId = record.WorkerRunId,
             assignmentId = record.AssignmentId,
+            taskId = record.TaskId,
+            role = record.Role,
+            profileIdentity = record.ProfileIdentity,
+            poolMemberId = record.PoolMemberId,
             harnessKind = record.HarnessKind.ToString(),
             harnessModuleName = record.HarnessModuleName,
             outcome = outcome.ToString().ToLowerInvariant(),

@@ -238,7 +238,7 @@ public sealed class ChannelsClient : IChannelsClient
 
     /// <summary>
     /// Wire shape of the den-channels list response
-    /// (<c>GatewayEventsDto</c>). The reader does not need
+    /// (<c>ChannelsEventListEnvelope</c>). The reader does not need
     /// <c>HasMore</c> for paging (it uses <c>NextAfterId</c> directly)
     /// but Channels always returns it; we surface it on
     /// <see cref="ChannelsEventPage"/> for diagnostics.

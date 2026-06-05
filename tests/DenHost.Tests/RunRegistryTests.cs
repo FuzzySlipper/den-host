@@ -56,7 +56,12 @@ public class RunRegistryTests : IDisposable
         var (registry, _, _) = Build();
         var record = new LocalRunRecord(
             LocalRunId: "run-1",
+            WorkerRunId: null,
             AssignmentId: 100,
+            TaskId: null,
+            Role: null,
+            ProfileIdentity: null,
+            PoolMemberId: null,
             HarnessKind: HarnessModuleKind.Hermes,
             HarnessModuleName: "hermes-default",
             ProcessId: Environment.ProcessId,
@@ -78,7 +83,7 @@ public class RunRegistryTests : IDisposable
     public async Task RegisterAsync_AddsToActiveList()
     {
         var (registry, _, _) = Build();
-        var record = new LocalRunRecord("run-1", 100, HarnessModuleKind.Hermes, "h", null, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Starting, "");
+        var record = new LocalRunRecord("run-1", null, 100, null, null, null, null, HarnessModuleKind.Hermes, "h", null, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Starting, "");
         await registry.RegisterAsync(record, CancellationToken.None);
         Assert.True(registry.TryGet("run-1", out var active));
         Assert.Equal("run-1", active.LocalRunId);
@@ -88,7 +93,7 @@ public class RunRegistryTests : IDisposable
     public async Task MarkCleanlyStoppedAsync_RemovesMarkerAndFromActive()
     {
         var (registry, _, _) = Build();
-        var record = new LocalRunRecord("run-1", 100, HarnessModuleKind.Hermes, "h", Environment.ProcessId, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Starting, "");
+        var record = new LocalRunRecord("run-1", null, 100, null, null, null, null, HarnessModuleKind.Hermes, "h", Environment.ProcessId, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Starting, "");
         var saved = await registry.RegisterAsync(record, CancellationToken.None);
         Assert.True(File.Exists(Path.Combine(saved.RunDir, RunRegistry.UncleanShutdownMarkerFileName)));
 
@@ -103,7 +108,7 @@ public class RunRegistryTests : IDisposable
     public async Task ScanFromDiskAsync_RepopulatesActive()
     {
         var (registry, _, _) = Build();
-        var record = new LocalRunRecord("run-1", 100, HarnessModuleKind.Hermes, "h", null, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Starting, "");
+        var record = new LocalRunRecord("run-1", null, 100, null, null, null, null, HarnessModuleKind.Hermes, "h", null, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Starting, "");
         var saved = await registry.RegisterAsync(record, CancellationToken.None);
 
         var (registry2, _, _) = Build();
@@ -129,7 +134,7 @@ public class RunRegistryTests : IDisposable
         // The on-disk state.json is authoritative; the marker file is
         // inspected separately by the reconciliation service.
         var (registry, _, _) = Build();
-        var record = new LocalRunRecord("run-1", 100, HarnessModuleKind.Hermes, "h", null, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Running, "");
+        var record = new LocalRunRecord("run-1", null, 100, null, null, null, null, HarnessModuleKind.Hermes, "h", null, "/tmp/log", DateTimeOffset.UtcNow, LocalRunState.Running, "");
         await registry.RegisterAsync(record, CancellationToken.None);
 
         var (registry2, _, _) = Build();

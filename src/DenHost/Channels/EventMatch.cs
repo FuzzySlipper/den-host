@@ -41,9 +41,10 @@ public sealed record EventMatchOutcome(
 ///
 /// Migration diff note: the host matches on generic Den-facing
 /// fields (PoolMemberId, WorkerRole, AssignmentId, WorkerRunId);
-/// the legacy Gateway delivery loop matched on Hermes profile
-/// name + session key. The note is logged for comparison during
-/// cutover.
+/// the previous Gateway delivery loop matched on Hermes profile
+/// name + session key. This comparison is kept for cutover auditing
+/// only; Gateway is decommissioned and the host uses the Channels
+/// Direct Delivery / active-work routing green path.
 /// </summary>
 public static class EventMatcher
 {
@@ -63,8 +64,8 @@ public static class EventMatcher
                 IntendedAction: "wake",
                 MigrationDiffNote:
                     "Host matches on pool_member_id == adapter instance id; " +
-                    "legacy Gateway delivery loop matches on Hermes profile name. " +
-                    "Direct Delivery uses the generic pool_member_id.");
+                    "previous Gateway delivery loop matched on Hermes profile name. " +
+                    "Direct Delivery uses the generic pool_member_id; Gateway is decommissioned.");
         }
 
         // Rule 3: role is in our managed roles.
@@ -78,8 +79,8 @@ public static class EventMatcher
                 IntendedAction: "wake",
                 MigrationDiffNote:
                     "Host matches on generic role name (no Hermes profile); " +
-                    "legacy Gateway delivery loop would match on Hermes profile " +
-                    "name first, then role as a fallback.");
+                    "previous Gateway delivery loop would match on Hermes profile " +
+                    "name first, then role as a fallback. Gateway is decommissioned.");
         }
 
         // Rule 4: assignment or run id present; we cannot decide

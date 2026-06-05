@@ -2,8 +2,9 @@ namespace DenHost.Clients;
 
 /// <summary>
 /// One row in a Channels event list response. Mirrors the wire
-/// shape of den-channels <c>GatewayEventItemDto</c> (which is the
-/// current list response for both /api/gateway/events and the
+/// shape of den-channels <c>ChannelsEventItemDto</c> (which is the
+/// current list response for the Channels-owned
+/// /api/direct-agent-events endpoint and the
 /// single-event GET /api/direct-agent-events/{eventId} readback).
 /// The shape is intentionally flat -- the source/target split is
 /// implicit in field naming (SourceXxx / TargetXxx).

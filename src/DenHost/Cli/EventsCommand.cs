@@ -9,7 +9,7 @@ namespace DenHost.Cli;
 /// <summary>
 /// One-shot <c>den-host events tail|get</c> command.
 /// <c>tail</c> reads a page from the configured list endpoint
-/// (transitional /api/gateway/events); <c>get &lt;eventId&gt;</c>
+/// (Channels-owned /api/direct-agent-events); <c>get &lt;eventId&gt;</c>
 /// reads a single event from the primary Channels readback
 /// (GET /api/direct-agent-events/{eventId}). Both are shadow-mode:
 /// the reader never launches a worker.
@@ -189,7 +189,7 @@ public sealed class EventsCommand : ICliCommand
         host.WriteLine("");
         host.WriteLine("Subcommands:");
         host.WriteLine("  tail [--channel-id N] [--project-id P] [--after-id N] [--limit N] [--json]");
-        host.WriteLine("      Read a page of wake_event items from the configured list endpoint (transitional /api/gateway/events).");
+        host.WriteLine("      Read a page of wake_event items from the configured list endpoint (Channels-owned /api/direct-agent-events).");
         host.WriteLine("  get <eventId> [--json]");
         host.WriteLine("      Read a single direct-agent event from the primary Channels readback (GET /api/direct-agent-events/{eventId}).");
     }

@@ -55,7 +55,12 @@ public class ReconciliationServiceTests : IDisposable
     {
         return new LocalRunRecord(
             LocalRunId: localRunId,
+            WorkerRunId: null,
             AssignmentId: 42,
+            TaskId: null,
+            Role: null,
+            ProfileIdentity: null,
+            PoolMemberId: null,
             HarnessKind: HarnessModuleKind.Hermes,
             HarnessModuleName: "h",
             ProcessId: pid,
