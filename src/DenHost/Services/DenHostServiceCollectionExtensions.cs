@@ -103,14 +103,14 @@ public static class DenHostServiceCollectionExtensions
         services.AddHttpClient<ICoreClient, CoreClient>((sp, client) =>
         {
             var core = sp.GetRequiredService<IOptions<CoreOptions>>().Value;
-            client.BaseAddress = new Uri(core.BaseUrl);
+            client.BaseAddress = NormalizeBaseAddress(core.BaseUrl);
             client.Timeout = TimeSpan.FromMilliseconds(core.TimeoutMs);
         });
 
         services.AddHttpClient<IChannelsClient, ChannelsClient>((sp, client) =>
         {
             var channels = sp.GetRequiredService<IOptions<ChannelsOptions>>().Value;
-            client.BaseAddress = new Uri(channels.BaseUrl);
+            client.BaseAddress = NormalizeBaseAddress(channels.BaseUrl);
             client.Timeout = TimeSpan.FromMilliseconds(channels.TimeoutMs);
         });
 
@@ -217,5 +217,13 @@ public static class DenHostServiceCollectionExtensions
         if (string.IsNullOrWhiteSpace(value)) return false;
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return false;
         return uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps;
+    }
+
+    private static Uri NormalizeBaseAddress(string value)
+    {
+        var uri = new Uri(value);
+        return uri.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
+            ? uri
+            : new Uri(uri.AbsoluteUri + "/");
     }
 }

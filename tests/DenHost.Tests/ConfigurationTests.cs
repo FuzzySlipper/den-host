@@ -37,9 +37,9 @@ public class ConfigurationTests
         var json = """
         {
           "Core": {
-            "BaseUrl": "http://127.0.0.1:18081",
-            "HealthPath": "/healthz",
-            "BindingPath": "/api/direct-delivery/adapter-bindings",
+            "BaseUrl": "http://127.0.0.1:18081/den-core-api",
+            "HealthPath": "/health",
+            "BindingPath": "/api/direct-delivery/bindings",
             "TimeoutMs": 7500
           }
         }
@@ -47,9 +47,9 @@ public class ConfigurationTests
         using var provider = BuildProvider(json);
         var options = provider.GetRequiredService<IOptions<CoreOptions>>().Value;
 
-        Assert.Equal("http://127.0.0.1:18081", options.BaseUrl);
-        Assert.Equal("/healthz", options.HealthPath);
-        Assert.Equal("/api/direct-delivery/adapter-bindings", options.BindingPath);
+        Assert.Equal("http://127.0.0.1:18081/den-core-api", options.BaseUrl);
+        Assert.Equal("/health", options.HealthPath);
+        Assert.Equal("/api/direct-delivery/bindings", options.BindingPath);
         Assert.Equal(7500, options.TimeoutMs);
     }
 

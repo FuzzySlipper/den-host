@@ -1,0 +1,66 @@
+{
+  "_comment": "Example den-host configuration. Copy to den-host.json and adjust for your environment. Do not commit secrets; use DEN_HOST_CORE_API_KEY / DEN_HOST_CHANNELS_API_KEY env vars instead.",
+
+  "Adapter": {
+    "Kind": "host",
+    "InstanceId": "den-host-local-01",
+    "Host": "workstation-01",
+    "_comment_ManagedRoles": "Host-level roles this adapter instance claims it can satisfy. The Hermes module also advertises its own roles under Harness:Modules[].Settings.roles; both are honored by the Channels event matcher (host-level match is a structural signal, module-level match means 'this harness can actually serve the role'). Leave empty if you want the Hermes module's roles to be the only source of truth.",
+    "ManagedRoles": [],
+    "ManagedCapabilities": []
+  },
+
+  "Core": {
+    "BaseUrl": "http://127.0.0.1:18081/den-core-api",
+    "HealthPath": "/health",
+    "BindingPath": "/api/direct-delivery/bindings",
+    "TimeoutMs": 5000,
+    "_comment_ApiKey": "Set DEN_HOST_CORE_API_KEY env var instead of filling this in."
+  },
+
+  "Channels": {
+    "BaseUrl": "http://127.0.0.1:18082",
+    "HealthPath": "/healthz",
+    "_comment_paths": "EventsListPath is the transitional gateway list endpoint; DirectAgentEventPath is the primary Channels readback (GET /api/direct-agent-events/{eventId}). Set EventsListChannelId or EventsListProjectId so the list reader has a scope.",
+    "EventsListPath": "/api/gateway/events",
+    "EventsListChannelId": null,
+    "EventsListProjectId": null,
+    "DirectAgentEventPath": "/api/direct-agent-events",
+    "TimeoutMs": 5000,
+    "_comment_ApiKey": "Set DEN_HOST_CHANNELS_API_KEY env var instead of filling this in."
+  },
+
+  "Runtime": {
+    "ConfigDir": "/home/dev/den-host/config",
+    "RunDir": "/home/dev/den-host/.runtime/run",
+    "StateDir": "/home/dev/den-host/.runtime/state",
+    "LogDir": "/home/dev/den-host/.runtime/log",
+    "QuarantineDir": "/home/dev/den-host/.runtime/quarantine",
+    "BindingHeartbeatSeconds": 30,
+    "ChannelsEventPollSeconds": 30,
+    "ChannelsEventPageSize": 50
+  },
+
+  "Harness": {
+    "Modules": [
+      {
+        "Name": "stub",
+        "Kind": "Stub",
+        "Enabled": true,
+        "Settings": {}
+      },
+      {
+        "Name": "hermes-default",
+        "Kind": "Hermes",
+        "Enabled": true,
+        "Settings": {
+          "_comment": "Hermes module is the first concrete harness. Set binary_path / profile / home for your install. 'roles' is a CSV of Den-facing role names this module satisfies.",
+          "profile": "den-mcp-runner",
+          "home": "/home/agent/.hermes",
+          "max_turns": 1,
+          "roles": "coder,reviewer"
+        }
+      }
+    ]
+  }
+}

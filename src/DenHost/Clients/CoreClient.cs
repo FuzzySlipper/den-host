@@ -40,7 +40,7 @@ public sealed class CoreClient : ICoreClient
             return ProbeResult.Unreachable(null, 0, "Core:HealthPath not configured");
         }
 
-        return await ProbeAsync(HttpMethod.Get, path, cancellationToken).ConfigureAwait(false);
+        return await ProbeAsync(HttpMethod.Get, BuildRelativePath(path), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<AdapterBindingSnapshot> RegisterAdapterBindingAsync(
@@ -60,7 +60,7 @@ public sealed class CoreClient : ICoreClient
         // Shape assumed: PUT {BindingPath}/{adapterInstanceId} with the request body.
         // Core contract task #1901 is the source of truth for this URL; if it differs,
         // change this method only.
-        var path = $"{_options.BindingPath.TrimEnd('/')}/{Uri.EscapeDataString(request.AdapterInstanceId)}";
+        var path = BuildRelativePath(_options.BindingPath, request.AdapterInstanceId);
         using var message = new HttpRequestMessage(HttpMethod.Put, path)
         {
             Content = JsonContent.Create(request, options: s_jsonOptions),
@@ -108,7 +108,7 @@ public sealed class CoreClient : ICoreClient
             return null;
         }
 
-        var path = $"{_options.BindingPath.TrimEnd('/')}/{Uri.EscapeDataString(adapterInstanceId)}";
+        var path = BuildRelativePath(_options.BindingPath, adapterInstanceId);
         using var message = new HttpRequestMessage(HttpMethod.Get, path);
         if (!string.IsNullOrEmpty(_options.ApiKey))
         {
@@ -197,5 +197,16 @@ public sealed class CoreClient : ICoreClient
         {
             return string.Empty;
         }
+    }
+
+    private static string BuildRelativePath(string path, string? suffix = null)
+    {
+        var relativePath = path.Trim('/');
+        if (!string.IsNullOrEmpty(suffix))
+        {
+            relativePath = $"{relativePath}/{Uri.EscapeDataString(suffix)}";
+        }
+
+        return relativePath;
     }
 }
