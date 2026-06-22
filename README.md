@@ -1,11 +1,12 @@
 # den-host
 
-The harness-agnostic machine-local Den agent/runtime host.
+The machine-local Den FleetOps host and retired runtime-host experiment.
 
-`den-host` adapts local runtime/harness reality to Den-owned Core/Channels
-contracts. It does not define Den workflow truth, it does not own canonical
-task/assignment/lease/run state, and it does not leak harness internals
-(Hermes, Pi, Codex, Claude Code, OpenCode) into Core or Channels.
+`den-host` is currently scoped to FleetOps/local machine control. Its old
+worker wake-supervision plane is retired: normal worker coordination should not
+flow through den-host or den-channels direct-agent compatibility routes. Future
+worker lifecycle/coordination should move toward the Rust/Rusty Crew runtime
+service path rather than reviving this repository as a generic host supervisor.
 
 ## Boundary
 
@@ -14,34 +15,31 @@ Core
   workflow truth: tasks, assignments, leases, runs, pool members,
   completion/block/failure, release/quarantine, binding projections
 
-Channels
-  operations conversation: rooms, messages, activity, direct-agent event
-  creation, checkpoint/completion visibility, source context, target work
+Delivery / Runtime / Conversation / Observation successors
+  executable wake intent lifecycle, runtime liveness/session state,
+  human-facing transcript rows, progress/activity read models
 
 den-host                              (this repo)
-  machine-local config, endpoint discovery, local agent inventory,
-  harness modules, process/session/wake mechanics, heartbeat/status,
-  run-dir/PID/log reconciliation, cleanup/quarantine evidence
+  FleetOps/local machine control and legacy cold-history diagnostics only
 
-Harness modules                       (separate assemblies, firewall below)
-  Hermes, Pi-style helper/actor runtime, Codex CLI, Claude Code, OpenCode,
-  future Den-native actor runtime
+Rusty Crew / future runtime service
+  preferred future worker coordination/lifecycle owner
 ```
 
-The host speaks to Core and Channels only over HTTP, using the generic
-adapter-facing contract. It does not know about Hermes profiles, session
-keys, plugin quirks, or any other harness-internal concept.
+The FleetOps surface should start without den-channels or legacy Gateway
+compatibility routes. Any remaining Channels client code is for explicit
+archival/cold-history readback, not active worker wake production.
 
 ## Non-goals
 
 - `den-host` is not a second Core. Workflow truth stays in Core.
 - `den-host` does not own canonical task/assignment/lease/run/completion state.
-- `den-host` does not move user-visible conversation policy out of Channels.
-- `den-host` does not leak Hermes/Pi/Codex/OpenCode/Claude Code internals
-  into Core or Channels.
+- `den-host` does not own executable wake routing or worker coordination.
+- `den-host` does not require den-channels direct-agent, channel membership,
+  channel subscription, or Gateway catch-all compatibility routes for active operation.
+- `den-host` does not move user-visible conversation policy out of successor
+  Conversation/Timeline surfaces.
 - `den-host` does not require ordinary agents to know LAN IP/port topology.
-- `den-host` does not replicate Gateway semantics; those were decommissioned
-  and Channels owns the direct-agent/event/routing surface.
 
 ## Build
 
@@ -98,9 +96,9 @@ dotnet run -- help
 |------------|-----------------------------------------------------------------|
 | `Adapter`  | Identity of this host as seen by Core/Channels.                 |
 | `Core`     | Core endpoint: base URL, health path, binding path, timeout.    |
-| `Channels` | Channels endpoint: base URL, health path, list/event paths, scope (channelId / projectId), timeout. |
-| `Runtime`  | Local filesystem layout: run/state/log/quarantine dirs.         |
-| `Harness`  | List of configured harness modules (name, kind, settings).      |
+| `Channels` | Optional legacy den-channels cold-history/readback endpoint. Leave paths empty for normal operation. |
+| `Runtime`  | Local filesystem layout for legacy runtime evidence; `ChannelsEventPollSeconds` defaults to `0`. |
+| `Harness`  | Historical harness module configuration; not the green worker coordination path. |
 
 ### Harness firewall
 
@@ -173,8 +171,8 @@ It ships:
 - Generic Host / Worker Service entry point
 - config loader with options binding + `ValidateOnStart`
 - example non-secret config
-- Core/Channels typed HTTP clients (health probe, binding register/readback,
-  direct-agent event read)
+- Core typed HTTP client for health/binding readback and optional legacy
+  Channels client for cold-history diagnostics only
 - `den-host health` CLI command (text and JSON output)
 - harness module firewall assembly with the `IHarnessModule` interface
   (capabilities / inventory / wake / stop / evidence / reset / smoke)
@@ -183,13 +181,10 @@ It ships:
   the bounded `hermes --version` smoke
 - adapter binding heartbeat (`den-host binding`, `den-host run` background
   service) with blocker evidence when Core lacks the binding endpoint
-- Channels direct-agent shadow reader (`den-host events tail`,
-  `den-host events get <eventId>`, `den-host run` background service)
-  that never mutates Core/Channels and never launches a worker; logs
-  migration-diff notes for cutover comparison. The list reader targets
-  the Channels-owned /api/direct-agent-events endpoint; the single-event readback
-  targets the primary GET /api/direct-agent-events/{eventId} contract
-  (den-channels #1902).
+- Legacy direct-agent shadow reader code remains only as an explicitly
+  disabled cold-history/readback diagnostic. It is not enabled by default,
+  must not be used as a wake source, and is expected to disappear if the
+  repository is fully retired.
 - Local worker run registry with per-run directories, PID files, log
   pointers, and an unclean-shutdown marker; reconciliation service
   (`den-host reconcile`, `den-host run` background service) handles the

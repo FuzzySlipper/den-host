@@ -7,12 +7,10 @@ using DenHost.Configuration;
 namespace DenHost.Cli;
 
 /// <summary>
-/// One-shot <c>den-host events tail|get</c> command.
-/// <c>tail</c> reads a page from the configured list endpoint
-/// (Channels-owned /api/direct-agent-events); <c>get &lt;eventId&gt;</c>
-/// reads a single event from the primary Channels readback
-/// (GET /api/direct-agent-events/{eventId}). Both are shadow-mode:
-/// the reader never launches a worker.
+/// One-shot <c>den-host events tail|get</c> cold-history diagnostic command.
+/// It reads only explicitly configured legacy Channels readback paths and
+/// never launches a worker. Normal FleetOps-only operation leaves those paths
+/// empty and does not use this command.
 /// </summary>
 public sealed class EventsCommand : ICliCommand
 {
@@ -41,7 +39,7 @@ public sealed class EventsCommand : ICliCommand
 
     public string Name => "events";
 
-    public string Summary => "Read Channels events in shadow mode (subcommands: 'tail', 'get').";
+    public string Summary => "Read legacy Channels events for cold-history diagnostics (subcommands: 'tail', 'get').";
 
     public async Task<int> ExecuteAsync(CliContext context, CancellationToken cancellationToken)
     {
@@ -189,9 +187,9 @@ public sealed class EventsCommand : ICliCommand
         host.WriteLine("");
         host.WriteLine("Subcommands:");
         host.WriteLine("  tail [--channel-id N] [--project-id P] [--after-id N] [--limit N] [--json]");
-        host.WriteLine("      Read a page of wake_event items from the configured list endpoint (Channels-owned /api/direct-agent-events).");
+        host.WriteLine("      Read a page of legacy wake_event items from the explicitly configured list endpoint.");
         host.WriteLine("  get <eventId> [--json]");
-        host.WriteLine("      Read a single direct-agent event from the primary Channels readback (GET /api/direct-agent-events/{eventId}).");
+        host.WriteLine("      Read a single legacy direct-agent event from the explicitly configured readback endpoint.");
     }
 
     private static string FormatTailText(ChannelsEventReadResult result)

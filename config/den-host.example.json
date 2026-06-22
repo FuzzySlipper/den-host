@@ -5,13 +5,13 @@
     "Kind": "host",
     "InstanceId": "den-host-local-01",
     "Host": "workstation-01",
-    "_comment_ManagedRoles": "Host-level roles this adapter instance claims it can satisfy. The Hermes module also advertises its own roles under Harness:Modules[].Settings.roles; both are honored by the Channels event matcher (host-level match is a structural signal, module-level match means 'this harness can actually serve the role'). Leave empty if you want the Hermes module's roles to be the only source of truth.",
+    "_comment_ManagedRoles": "Historical host-level role claims. Leave empty for FleetOps-only operation; den-host is not the active worker wake/coordination path.",
     "ManagedRoles": [],
     "ManagedCapabilities": []
   },
 
   "Core": {
-    "BaseUrl": "http://127.0.0.1:18081/den-core-api",
+    "BaseUrl": "http://127.0.0.1:5299",
     "HealthPath": "/health",
     "BindingPath": "/api/direct-delivery/bindings",
     "TimeoutMs": 5000,
@@ -19,15 +19,16 @@
   },
 
   "Channels": {
-    "BaseUrl": "http://127.0.0.1:18082",
-    "HealthPath": "/healthz",
-    "_comment_paths": "EventsListPath is the transitional gateway list endpoint; DirectAgentEventPath is the primary Channels readback (GET /api/direct-agent-events/{eventId}). Set EventsListChannelId or EventsListProjectId so the list reader has a scope.",
-    "EventsListPath": "/api/gateway/events",
+    "_comment": "Optional legacy den-channels cold-history/readback only. Leave paths empty for normal FleetOps-only operation; do not use den-channels direct-agent routes as a worker wake source.",
+    "BaseUrl": "http://127.0.0.1:1",
+    "HealthPath": "",
+    "EventsListPath": "",
     "EventsListChannelId": null,
     "EventsListProjectId": null,
-    "DirectAgentEventPath": "/api/direct-agent-events",
+    "DirectAgentEventPath": "",
+    "AgentWorkLifecyclePath": "",
     "TimeoutMs": 5000,
-    "_comment_ApiKey": "Set DEN_HOST_CHANNELS_API_KEY env var instead of filling this in."
+    "_comment_ApiKey": "Only set DEN_HOST_CHANNELS_API_KEY when deliberately reading archived legacy Channels evidence."
   },
 
   "Runtime": {
@@ -37,7 +38,7 @@
     "LogDir": "/home/dev/den-host/.runtime/log",
     "QuarantineDir": "/home/dev/den-host/.runtime/quarantine",
     "BindingHeartbeatSeconds": 30,
-    "ChannelsEventPollSeconds": 30,
+    "ChannelsEventPollSeconds": 0,
     "ChannelsEventPageSize": 50
   },
 
@@ -46,7 +47,7 @@
       {
         "Name": "stub",
         "Kind": "Stub",
-        "Enabled": true,
+        "Enabled": false,
         "Settings": {}
       },
       {

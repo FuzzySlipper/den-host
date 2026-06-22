@@ -59,12 +59,12 @@ public sealed class RuntimeOptions
     public int BindingHeartbeatSeconds { get; init; } = 30;
 
     /// <summary>
-    /// Interval in seconds between Channels direct-agent event reads
-    /// when running in shadow mode. Set to 0 to disable the background
-    /// reader (one-shot <c>den-host events tail</c> is still available).
+    /// Interval in seconds between legacy Channels direct-agent event reads
+    /// when running in explicit cold-history/shadow mode. Defaults to 0
+    /// because den-host is not an active worker wake reader.
     /// </summary>
     [Range(0, 86_400)]
-    public int ChannelsEventPollSeconds { get; init; } = 30;
+    public int ChannelsEventPollSeconds { get; init; } = 0;
 
     /// <summary>
     /// Page size for the Channels direct-agent event reader.

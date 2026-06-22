@@ -114,7 +114,7 @@ Expected output:
 
 ```text
 active
-active
+inactive
 ```
 
 Then verify HTTP health and FleetOps discovery:
@@ -178,25 +178,25 @@ scripts/deploy-den-host.sh --install-from /tmp/den-host-live-publish.XXXXXX --us
 
 Until that exists, use the manual user-service install steps above.
 
-## SSH tunnel note
+## Endpoint note
 
-den-host connects to Core (`127.0.0.1:5299`) and Channels (`127.0.0.1:18081`)
-via SSH tunnels from den-srv. These tunnels are managed separately by the
-infrastructure account (`agent-sysadmin`); the deployment flow above does not
-configure tunnels. If deploying on a machine that does not already have tunnels
-to den-srv, set `Core:BaseUrl` and `Channels:BaseUrl` in `den-host.json` to
-directly reachable network addresses instead.
+FleetOps-only den-host needs Core only for health/binding diagnostics. Do not
+configure legacy den-channels direct-agent, channel subscription, or Gateway
+catch-all routes for active operation. If old Channels evidence must be
+inspected, set the `Channels` paths deliberately for that cold-history session
+and keep `Runtime:ChannelsEventPollSeconds` at `0` unless running a bounded
+diagnostic.
 
 ## Known non-deployment warning
 
-`den-host run` may log a Core binding registration failure like `Core binding register failed: 404 Not Found`. This was present before the user-service migration and should not be diagnosed as a failed deployment unless health/FleetOps checks also fail.
+`den-host run` is retired/inactive in the normal FleetOps-only deployment. Do not diagnose its inactivity as a failed deployment unless a task explicitly revives the worker-supervision plane.
 
 ## Operational checklist
 
 Before marking a deployment complete, capture:
 
 1. publish directory and binary checksum;
-2. active/enabled state of the two user units;
+2. active/enabled state of `den-host-fleetops.service` and inactive state of retired `den-host.service`;
 3. inactive/disabled state of the two legacy system units;
 4. health endpoint output;
 5. FleetOps service-unit count;

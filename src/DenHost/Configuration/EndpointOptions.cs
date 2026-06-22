@@ -3,16 +3,15 @@ using System.ComponentModel.DataAnnotations;
 namespace DenHost.Configuration;
 
 /// <summary>
-/// Base shape for a Den endpoint (Core or Channels). Concrete
-/// subclasses bind to "Core" or "Channels" sections of the
-/// den-host.json config and provide type-safe accessors.
+/// Base shape for a Den endpoint. Concrete subclasses bind to named
+/// sections of the den-host.json config and provide type-safe accessors.
 /// </summary>
 public abstract class EndpointOptions
 {
     /// <summary>
-    /// Absolute base URL of the endpoint, e.g. "http://127.0.0.1:18081".
-    /// Must be an absolute URI. Loopback is preferred for direct delivery
-    /// so den-host does not require ordinary agents to know LAN topology.
+    /// Absolute base URL of the endpoint, e.g. "http://127.0.0.1:5299".
+    /// Must be an absolute URI. Loopback is preferred for machine-local
+    /// probes so den-host does not require ordinary agents to know LAN topology.
     /// </summary>
     [Required]
     public string BaseUrl { get; init; } = "";
@@ -53,24 +52,25 @@ public sealed class CoreOptions : EndpointOptions
 }
 
 /// <summary>
-/// Configuration for the Channels endpoint. Channels owns the
-/// operations conversation (rooms, messages, activity, direct-agent
-/// event creation, source context, target work metadata, delivery/
-/// checkpoint traces).
+/// Optional legacy Channels compatibility/archive endpoint.
+///
+/// Den-host no longer treats den-channels direct-agent routes as an active
+/// worker wake or coordination contract. New executable wakes belong to the
+/// Delivery successor and human-facing transcript/readback belongs to the
+/// Conversation/Timeline successors. Keep these options empty unless an
+/// operator deliberately needs cold-history readback for old den-channels
+/// evidence.
 /// </summary>
 public sealed class ChannelsOptions : EndpointOptions
 {
     public const string SectionName = "Channels";
 
     /// <summary>
-    /// Path for the list-endpoint the shadow reader polls. Defaults to
-    /// the Channels-owned /api/direct-agent-events list route; the primary
-    /// contract surface is POST /api/direct-agent-events plus
-    /// GET /api/direct-agent-events/{eventId}, which are reachable
-    /// through the single-event readback method on IChannelsClient.
-    /// Gateway is decommissioned; this path is Channels-owned.
+    /// Optional legacy list endpoint used only for explicit cold-history
+    /// readback. Empty by default so den-host can run with den-channels
+    /// legacy direct-agent routes unavailable.
     /// </summary>
-    public string EventsListPath { get; init; } = "/api/direct-agent-events";
+    public string EventsListPath { get; init; } = "";
 
     /// <summary>
     /// Optional channel id to scope the list read. If null, the
@@ -85,15 +85,15 @@ public sealed class ChannelsOptions : EndpointOptions
     public string? EventsListProjectId { get; init; }
 
     /// <summary>
-    /// Path for the primary single-event readback (GET
-    /// /api/direct-agent-events/{eventId}). Used by the future wake
-    /// path's "I have an event id, fetch its details" flow.
+    /// Optional legacy single-event readback path. Empty by default;
+    /// den-host is not the active wake reader.
     /// </summary>
-    public string DirectAgentEventPath { get; init; } = "/api/direct-agent-events";
+    public string DirectAgentEventPath { get; init; } = "";
 
     /// <summary>
-    /// Path for the machine-written, non-waking agent-work lifecycle event
-    /// producer contract (POST /api/agent-work/lifecycle-events).
+    /// Optional legacy machine-written lifecycle event producer path.
+    /// Empty by default because den-host no longer publishes active worker
+    /// lifecycle through den-channels.
     /// </summary>
-    public string AgentWorkLifecyclePath { get; init; } = "/api/agent-work/lifecycle-events";
+    public string AgentWorkLifecyclePath { get; init; } = "";
 }

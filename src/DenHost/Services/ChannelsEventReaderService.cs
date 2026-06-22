@@ -8,11 +8,9 @@ using Microsoft.Extensions.Logging;
 namespace DenHost.Services;
 
 /// <summary>
-/// Background service that polls Channels for direct-agent events in
-/// shadow mode. Each tick reads a page, logs the match outcomes for
-/// every wake event (with the migration-diff note), and never launches
-/// a worker. The service is the long-lived form of
-/// <c>den-host events tail</c>; the one-shot CLI uses the same reader.
+/// Optional background service for legacy den-channels direct-agent event
+/// cold-history diagnostics. It is disabled by default and must not be used
+/// as an active wake source.
 /// </summary>
 public sealed class ChannelsEventReaderService : BackgroundService
 {
@@ -71,8 +69,8 @@ public sealed class ChannelsEventReaderService : BackgroundService
                         {
                             _logger.LogWarning(
                                 "Channels list endpoint not implemented (consecutive_missing={Count}). " +
-                                "The shadow reader will keep polling. " +
-                                "Use 'den-host events tail' to inspect manually.",
+                                "The cold-history reader will keep polling while enabled. " +
+                                "Use 'den-host events tail' for bounded manual diagnostics.",
                                 consecutiveEndpointMissing);
                         }
                         continue;

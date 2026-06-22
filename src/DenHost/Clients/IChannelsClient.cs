@@ -1,11 +1,9 @@
 namespace DenHost.Clients;
 
 /// <summary>
-/// One row in a Channels event list response. Mirrors the wire
-/// shape of den-channels <c>ChannelsEventItemDto</c> (which is the
-/// current list response for the Channels-owned
-/// /api/direct-agent-events endpoint and the
-/// single-event GET /api/direct-agent-events/{eventId} readback).
+/// One row in a legacy Channels event list response. This type is retained
+/// only for explicit cold-history/readback diagnostics; den-host is not an
+/// active direct-agent wake reader.
 /// The shape is intentionally flat -- the source/target split is
 /// implicit in field naming (SourceXxx / TargetXxx).
 /// All fields are optional in the wire protocol; the matcher only
@@ -60,10 +58,10 @@ public sealed record ChannelsEventPage(
     bool EndpointImplemented);
 
 /// <summary>
-/// Single-event readback from GET /api/direct-agent-events/{eventId}.
-/// Includes the full attribution set (source / target / session /
-/// delivery / claim / completion) and a free-text body. Used by the
-/// future wake path's "I have an event id, fetch its details" flow.
+/// Legacy single-event readback. Includes the full attribution set
+/// (source / target / session / delivery / claim / completion) and a
+/// free-text body. New wake coordination must use successor Delivery/
+/// Runtime surfaces, not this path.
 /// </summary>
 public sealed record ChannelsEventReadback(
     long EventId,
@@ -94,8 +92,8 @@ public sealed record ChannelsEventReadback(
     DateTimeOffset CreatedAt);
 
 /// <summary>
-/// Machine-write request to record a non-waking agent-work lifecycle event
-/// in Channels (POST /api/agent-work/lifecycle-events).
+/// Legacy machine-write request for old den-channels lifecycle evidence.
+/// Not used by the FleetOps-only green path.
 /// </summary>
 public sealed class AgentWorkLifecycleWriteRequest
 {
@@ -155,8 +153,8 @@ public interface IChannelsClient
     Task<ProbeResult> GetHealthAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Reads a page of direct-agent events from the configured list
-    /// endpoint. Used by the shadow-mode reader (den-host task #1916).
+    /// Reads a page of legacy direct-agent events from the configured list
+    /// endpoint. Used only by explicit cold-history/shadow diagnostics.
     /// The query is scoped by either <paramref name="channelId"/> or
     /// <paramref name="projectId"/>; <paramref name="afterId"/> is
     /// the long message id from the last row of the previous page

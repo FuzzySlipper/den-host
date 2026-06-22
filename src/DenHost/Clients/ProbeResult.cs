@@ -14,7 +14,7 @@ namespace DenHost.Clients;
 /// Wall-clock latency in milliseconds. -1 when the call did not complete.
 /// </param>
 /// <param name="Message">
-/// Human-readable diagnostic, e.g. "Connection refused (127.0.0.1:18081)"
+/// Human-readable diagnostic, e.g. "Connection refused (127.0.0.1:5299)"
 /// or "OK".
 /// </param>
 public sealed record ProbeResult(

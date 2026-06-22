@@ -37,7 +37,7 @@ public class ConfigurationTests
         var json = """
         {
           "Core": {
-            "BaseUrl": "http://127.0.0.1:18081/den-core-api",
+            "BaseUrl": "http://127.0.0.1:5299",
             "HealthPath": "/health",
             "BindingPath": "/api/direct-delivery/bindings",
             "TimeoutMs": 7500
@@ -47,7 +47,7 @@ public class ConfigurationTests
         using var provider = BuildProvider(json);
         var options = provider.GetRequiredService<IOptions<CoreOptions>>().Value;
 
-        Assert.Equal("http://127.0.0.1:18081/den-core-api", options.BaseUrl);
+        Assert.Equal("http://127.0.0.1:5299", options.BaseUrl);
         Assert.Equal("/health", options.HealthPath);
         Assert.Equal("/api/direct-delivery/bindings", options.BindingPath);
         Assert.Equal(7500, options.TimeoutMs);
@@ -76,6 +76,25 @@ public class ConfigurationTests
         Assert.Equal(42, options.EventsListChannelId);
         Assert.Equal("/api/v2/direct-agent-events", options.DirectAgentEventPath);
         Assert.Equal(2500, options.TimeoutMs);
+    }
+
+
+    [Fact]
+    public void ChannelsOptions_DefaultsDoNotEnableLegacyDirectAgentRoutes()
+    {
+        var options = new ChannelsOptions();
+
+        Assert.Equal(string.Empty, options.EventsListPath);
+        Assert.Equal(string.Empty, options.DirectAgentEventPath);
+        Assert.Equal(string.Empty, options.AgentWorkLifecyclePath);
+    }
+
+    [Fact]
+    public void RuntimeOptions_DefaultsDisableChannelsEventPolling()
+    {
+        var options = new RuntimeOptions();
+
+        Assert.Equal(0, options.ChannelsEventPollSeconds);
     }
 
     [Fact]
